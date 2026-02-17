@@ -79,7 +79,9 @@ export interface Operation {
 
 export interface CreateExecutionRequest {
   type?: string;
-  input?: unknown;
+  request?: unknown;
+  goal?: unknown;
+  parameters?: unknown;
 }
 
 export interface CreateExecutionResponse {

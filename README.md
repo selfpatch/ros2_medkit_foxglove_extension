@@ -58,7 +58,7 @@ src/
 ## Compatibility
 
 - Foxglove Studio ≥ 2.x
-- ros2\_medkit gateway ≥ 0.7.0
+- ros2\_medkit gateway ≥ 0.2.0
 - Supports both dark and light Foxglove themes
 
 ## Development

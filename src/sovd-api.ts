@@ -153,6 +153,19 @@ export class SovdApiClient {
     });
   }
 
+  async listFunctions(): Promise<SovdEntity[]> {
+    const items = unwrapItems<{ id: string; name: string; description?: string }>(
+      await fetchJSON<unknown>(this.url("functions"))
+    );
+    return items.map((f) => ({
+      id: f.id,
+      name: f.name || f.id,
+      type: "function",
+      href: `/functions/${f.id}`,
+      hasChildren: false,
+    }));
+  }
+
   // ── Data (Topics) ─────────────────────────────────────────────────
 
   async listEntityData(
@@ -252,7 +265,7 @@ export class SovdApiClient {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value }),
+        body: JSON.stringify({ data: value }),
       }
     );
   }

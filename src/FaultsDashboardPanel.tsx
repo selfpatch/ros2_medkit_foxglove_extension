@@ -21,7 +21,7 @@ import {
 import { createRoot } from "react-dom/client";
 
 import { SovdApiClient } from "./sovd-api";
-import type { Fault, FaultSeverity, FaultResponse, Snapshot } from "./types";
+import type { Fault, FaultSeverity, FaultResponse, Snapshot, SovdResourceEntityType } from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
 import type { Theme } from "./styles";
@@ -215,20 +215,28 @@ function FaultsDashboardPanel({
   // ── Handlers ────────────────────────────────────────────────────
 
   const handleClearAll = useCallback(async () => {
-    if (!client) return;
+    if (!client || faults.length === 0) return;
     try {
-      // Clear via all faults endpoint
-      const res = await fetch(
-        `${state.gatewayUrl}/${state.basePath}/faults`,
-        { method: "DELETE" },
-      );
-      if (res.ok) {
-        setFaults([]);
+      // Group faults by entity and clear per-entity (no global DELETE /faults endpoint)
+      const byEntity = new Map<string, { type: SovdResourceEntityType; id: string }>();
+      for (const f of faults) {
+        const key = `${f.entity_type}:${f.entity_id}`;
+        if (!byEntity.has(key)) {
+          const eType = (f.entity_type === "component" ? "components"
+            : f.entity_type === "app" ? "apps"
+            : f.entity_type === "area" ? "areas"
+            : "apps") as SovdResourceEntityType;
+          byEntity.set(key, { type: eType, id: f.entity_id });
+        }
       }
+      await Promise.all(
+        Array.from(byEntity.values()).map((e) => client.clearAllFaults(e.type, e.id).catch(() => {})),
+      );
+      setFaults([]);
     } catch {
       // ignore
     }
-  }, [client, state.gatewayUrl, state.basePath]);
+  }, [client, faults]);
 
   // ── Render ──────────────────────────────────────────────────────
 

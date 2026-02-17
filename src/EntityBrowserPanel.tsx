@@ -82,6 +82,7 @@ function EntityBrowserPanel({
 
   // Tree
   const [tree, setTree] = useState<TreeNode[]>([]);
+  const [functions, setFunctions] = useState<TreeNode[]>([]);
 
   // Selection
   const [selected, setSelected] = useState<SovdEntity | null>(null);
@@ -155,9 +156,13 @@ function EntityBrowserPanel({
       setClient(c);
       setConnected(true);
 
-      // Load areas
-      const areas = await c.listAreas();
+      // Load areas and functions in parallel
+      const [areas, funcs] = await Promise.all([
+        c.listAreas(),
+        c.listFunctions().catch(() => [] as SovdEntity[]),
+      ]);
       setTree(areas.map((a) => ({ entity: a, isExpanded: false, isLoading: false })));
+      setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
       setConnError(err instanceof Error ? err.message : "Connection failed");
     }
@@ -242,6 +247,7 @@ function EntityBrowserPanel({
       const eType: SovdResourceEntityType =
         entity.type === "area" ? "areas" :
         entity.type === "app" ? "apps" :
+        entity.type === "function" ? "functions" :
         "components";
       setSelectedType(eType);
       setActiveTab("data");
@@ -302,19 +308,41 @@ function EntityBrowserPanel({
       {/* Left: Tree */}
       <div style={{ width: "40%", minWidth: 180, overflow: "auto", borderRight: `1px solid ${c.borderLight}`, paddingRight: 8 }}>
         <h3 style={{ ...S.heading(theme), fontSize: 13 }}>Entities</h3>
-        {tree.length === 0 && <div style={S.emptyState(theme)}>No areas found</div>}
-        {tree.map((node, i) => (
-          <TreeNodeRow
-            key={node.entity.id}
-            node={node}
-            path={[i]}
-            depth={0}
-            theme={theme}
-            selected={selected}
-            onToggle={toggleNode}
-            onSelect={selectEntity}
-          />
-        ))}
+        {tree.length === 0 && functions.length === 0 && <div style={S.emptyState(theme)}>No entities found</div>}
+        {tree.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>Areas</div>
+            {tree.map((node, i) => (
+              <TreeNodeRow
+                key={node.entity.id}
+                node={node}
+                path={[i]}
+                depth={0}
+                theme={theme}
+                selected={selected}
+                onToggle={toggleNode}
+                onSelect={selectEntity}
+              />
+            ))}
+          </>
+        )}
+        {functions.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 8 }}>Functions</div>
+            {functions.map((node) => (
+              <TreeNodeRow
+                key={node.entity.id}
+                node={node}
+                path={[]}
+                depth={0}
+                theme={theme}
+                selected={selected}
+                onToggle={toggleNode}
+                onSelect={selectEntity}
+              />
+            ))}
+          </>
+        )}
       </div>
 
       {/* Right: Details */}
@@ -435,8 +463,8 @@ function TreeNodeRow({
 }): ReactElement {
   const c = S.colors(theme);
   const isSelected = selected?.id === node.entity.id;
-  const hasChildren = node.entity.type !== "app";
-  const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : "📦";
+  const hasChildren = node.entity.type !== "app" && node.entity.type !== "function";
+  const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : node.entity.type === "function" ? "⚡" : "📦";
 
   return (
     <>
@@ -548,7 +576,10 @@ function OperationsTab({
       if (!client) return;
       setRunning(op.name);
       try {
-        const res = await client.createExecution(entityType, entityId, op.name, {});
+        const req = op.kind === "action"
+          ? { type: op.type, goal: {} }
+          : { type: op.type, request: {} };
+        const res = await client.createExecution(entityType, entityId, op.name, req);
         setResults((prev) => ({ ...prev, [op.name]: res }));
       } catch (err) {
         setResults((prev) => ({
