@@ -19,6 +19,7 @@
     "build:prod": "foxglove-extension build --mode production",
     "local-install": "foxglove-extension install",
     "package": "foxglove-extension package",
+    "typecheck": "tsc --noEmit",
     "foxglove:prepublish": "foxglove-extension build --mode production"
   },
   "devDependencies": {
