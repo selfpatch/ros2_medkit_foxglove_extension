@@ -1,14 +1,14 @@
 {
   "name": "ros2-medkit-foxglove-extension",
-  "displayName": "SOVD Diagnostics for ros2_medkit",
-  "description": "Foxglove Studio panels for browsing SOVD entities and monitoring faults via the ros2_medkit gateway HTTP API.",
+  "displayName": "ros2_medkit Diagnostics",
+  "description": "Foxglove Studio panels for browsing entities and monitoring faults via the ros2_medkit gateway HTTP API.",
   "publisher": "selfpatch",
   "homepage": "https://github.com/selfpatch/ros2_medkit_foxglove_extension",
   "version": "0.0.1",
   "license": "Apache-2.0",
   "main": "./dist/extension.js",
   "keywords": [
-    "sovd",
+    "medkit",
     "ros2",
     "diagnostics",
     "foxglove",

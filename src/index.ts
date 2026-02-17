@@ -1,14 +1,14 @@
 // Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
 
 /**
- * Foxglove extension entry point for SOVD Diagnostics panels.
+ * Foxglove extension entry point for ros2_medkit diagnostics panels.
  *
- * Registers two panels that connect to the ros2_medkit SOVD gateway HTTP API:
+ * Registers two panels that connect to the ros2_medkit gateway HTTP API:
  *
- *   1. SOVD Entity Tree — tree navigation of areas → components → apps
+ *   1. ros2_medkit Entity Browser — tree navigation of areas → components → apps
  *      with tabs for data, operations, configurations, and faults.
  *
- *   2. SOVD Faults Dashboard — real-time monitoring with severity summary,
+ *   2. ros2_medkit Faults Dashboard — real-time monitoring with severity summary,
  *      SSE streaming, filtering, and fault clearing.
  */
 
@@ -19,12 +19,12 @@ import { initFaultsDashboardPanel } from "./FaultsDashboardPanel";
 
 export function activate(extensionContext: ExtensionContext): void {
   extensionContext.registerPanel({
-    name: "SOVD Entity Tree",
+    name: "ros2_medkit Entity Browser",
     initPanel: initEntityBrowserPanel,
   });
 
   extensionContext.registerPanel({
-    name: "SOVD Faults Dashboard",
+    name: "ros2_medkit Faults Dashboard",
     initPanel: initFaultsDashboardPanel,
   });
 }

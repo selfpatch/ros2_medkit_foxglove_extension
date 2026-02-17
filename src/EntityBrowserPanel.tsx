@@ -1,7 +1,7 @@
 // Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
 
 /**
- * Entity Browser panel — tree view of SOVD areas → components → apps.
+ * Entity Browser panel — tree view of ros2_medkit areas → components → apps.
  * Shows entity details, topic data, configurations, operations, and faults for selected entity.
  */
 
@@ -19,7 +19,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 
-import { SovdApiClient } from "./sovd-api";
+import { MedkitApiClient } from "./medkit-api";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -76,7 +76,7 @@ function EntityBrowserPanel({
     ...DEFAULT_STATE,
     ...(context.initialState as Partial<PanelState>),
   }));
-  const [client, setClient] = useState<SovdApiClient | null>(null);
+  const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | undefined>();
 
@@ -145,7 +145,7 @@ function EntityBrowserPanel({
   // ── Connect ─────────────────────────────────────────────────────
 
   const doConnect = useCallback(async () => {
-    const c = new SovdApiClient(state.gatewayUrl, state.basePath);
+    const c = new MedkitApiClient(state.gatewayUrl, state.basePath);
     setConnError(undefined);
     try {
       const ok = await c.ping();
@@ -291,7 +291,7 @@ function EntityBrowserPanel({
   if (!connected) {
     return (
       <div style={S.panelRoot(theme)}>
-        <h3 style={S.heading(theme)}>SOVD Entity Browser</h3>
+        <h3 style={S.heading(theme)}>ros2_medkit Entity Browser</h3>
         {connError && <div style={S.errorBox(theme)}>⚠ {connError}</div>}
         <p style={{ color: c.textMuted, fontSize: 12, marginBottom: 8 }}>
           Configure the gateway URL in panel settings (gear icon).
@@ -564,7 +564,7 @@ function OperationsTab({
   operations: Operation[];
   entityId: string;
   entityType: SovdResourceEntityType;
-  client: SovdApiClient | null;
+  client: MedkitApiClient | null;
   theme: Theme;
 }): ReactElement {
   const c = S.colors(theme);
@@ -651,7 +651,7 @@ function ConfigurationsTab({
   configs: Parameter[];
   entityId: string;
   entityType: SovdResourceEntityType;
-  client: SovdApiClient | null;
+  client: MedkitApiClient | null;
   theme: Theme;
   onRefresh: () => void;
 }): ReactElement {
@@ -773,7 +773,7 @@ function FaultsTab({
   faults: Fault[];
   entityId: string;
   entityType: SovdResourceEntityType;
-  client: SovdApiClient | null;
+  client: MedkitApiClient | null;
   theme: Theme;
   onRefresh: () => void;
 }): ReactElement {

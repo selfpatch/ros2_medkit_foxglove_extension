@@ -1,13 +1,13 @@
-# SOVD Diagnostics — Foxglove Extension
+# ros2_medkit Diagnostics — Foxglove Extension
 
-Foxglove Studio panels for browsing and interacting with the **ros2\_medkit SOVD gateway** HTTP API.
+Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gateway** HTTP API.
 
 ## Panels
 
 | Panel | Description |
 |-------|-------------|
-| **SOVD Entity Tree** | Tree view of SOVD areas → components → apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
-| **SOVD Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
+| **ros2_medkit Entity Browser** | Tree view of areas → components → apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
+| **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
 
 ## Prerequisites
 
@@ -31,8 +31,8 @@ npm run package
 ```
 
 After `local-install`, restart Foxglove Studio and add panels from the panel menu:
-- **SOVD Entity Tree**
-- **SOVD Faults Dashboard**
+- **ros2_medkit Entity Browser**
+- **ros2_medkit Faults Dashboard**
 
 ## Configuration
 
@@ -48,8 +48,8 @@ The Faults Dashboard has additional settings for refresh rate and SSE streaming.
 ```
 src/
 ├── index.ts                   # Extension entry — registers both panels
-├── types.ts                   # SOVD type definitions
-├── sovd-api.ts                # HTTP API client for ros2_medkit gateway
+├── types.ts                   # ros2_medkit gateway type definitions
+├── medkit-api.ts              # HTTP API client for ros2_medkit gateway
 ├── styles.ts                  # Inline style helpers (dark/light theme)
 ├── EntityBrowserPanel.tsx     # Entity tree + detail tabs
 └── FaultsDashboardPanel.tsx   # Faults monitoring + SSE

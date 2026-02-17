@@ -1,8 +1,8 @@
 // Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
 
 /**
- * HTTP API client for the ros2_medkit SOVD gateway.
- * Simplified port of sovd_web_ui SovdApiClient for use inside Foxglove extensions.
+ * HTTP API client for the ros2_medkit gateway.
+ * Simplified port of sovd_web_ui for use inside Foxglove extensions.
  */
 
 import type {
@@ -69,7 +69,7 @@ function unwrapItems<T>(response: unknown): T[] {
 // Client
 // ---------------------------------------------------------------------------
 
-export class SovdApiClient {
+export class MedkitApiClient {
   private readonly base: string;
   private readonly prefix: string;
 

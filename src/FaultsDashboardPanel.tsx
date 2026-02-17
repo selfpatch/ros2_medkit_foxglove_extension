@@ -20,7 +20,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 
-import { SovdApiClient } from "./sovd-api";
+import { MedkitApiClient } from "./medkit-api";
 import type { Fault, FaultSeverity, FaultResponse, Snapshot, SovdResourceEntityType } from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
@@ -60,7 +60,7 @@ function FaultsDashboardPanel({
     ...DEFAULT_STATE,
     ...(context.initialState as Partial<PanelState>),
   }));
-  const [client, setClient] = useState<SovdApiClient | null>(null);
+  const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -140,7 +140,7 @@ function FaultsDashboardPanel({
   // ── Connection & data ───────────────────────────────────────────
 
   const fetchFaults = useCallback(
-    async (c: SovdApiClient) => {
+    async (c: MedkitApiClient) => {
       try {
         const res = await c.listAllFaults();
         setFaults(res.items);
@@ -154,7 +154,7 @@ function FaultsDashboardPanel({
 
   // Connect + initial fetch + polling
   useEffect(() => {
-    const c = new SovdApiClient(state.gatewayUrl, state.basePath);
+    const c = new MedkitApiClient(state.gatewayUrl, state.basePath);
     let cancelled = false;
     let interval: ReturnType<typeof setInterval> | undefined;
 
@@ -406,7 +406,7 @@ function FaultCard({
 }: {
   fault: Fault;
   theme: Theme;
-  client: SovdApiClient | null;
+  client: MedkitApiClient | null;
   expandedFault: string | null;
   faultDetail: FaultResponse | null;
   detailLoading: boolean;

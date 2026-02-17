@@ -2,7 +2,7 @@
 
 /**
  * SOVD types for the ros2_medkit gateway API.
- * Derived from sovd_web_ui/src/lib/types.ts — simplified for Foxglove panels.
+ * Derived from sovd_web_ui — simplified for Foxglove panels.
  */
 
 // =============================================================================
