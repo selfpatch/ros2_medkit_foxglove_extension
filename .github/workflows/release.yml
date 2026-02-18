@@ -62,5 +62,5 @@ jobs:
 
             ```
             sha256sum: ${{ steps.assets.outputs.sha256 }}
-            foxe: https://github.com/selfpatch/ros2_medkit_foxglove_extension/releases/download/${{ steps.assets.outputs.tag }}/${{ steps.assets.outputs.foxe_file }}
+            foxe: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.assets.outputs.tag }}/${{ steps.assets.outputs.foxe_file }}
             ```
