@@ -73,6 +73,19 @@ npm run build:prod
 
 The extension uses inline styles (no external CSS) because Foxglove sandboxes extensions without access to global stylesheets. Theme colors adapt automatically based on Foxglove's `colorScheme` render state.
 
+## Releasing
+
+Releases are automated via GitHub Actions. To publish a new version:
+
+1. Bump `version` in `package.json`
+2. Commit: `git commit -am "chore: bump version to X.Y.Z"`
+3. Tag: `git tag vX.Y.Z`
+4. Push: `git push origin main --tags`
+
+CI will validate that the tag matches `package.json`, build the `.foxe`, and create a GitHub Release with:
+- The `.foxe` file as a downloadable asset
+- `sha256sum` and download URL ready for the [Foxglove extension registry](https://github.com/foxglove/extension-registry) PR
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).

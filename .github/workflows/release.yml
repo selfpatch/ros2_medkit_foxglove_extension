@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Validate tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build (production)
+        run: npm run build:prod
+
+      - name: Package extension (.foxe)
+        run: npm run package
+
+      - name: Prepare release assets
+        id: assets
+        run: |
+          FOXE_FILE=$(ls *.foxe)
+          SHA256=$(sha256sum "$FOXE_FILE" | awk '{print $1}')
+          echo "foxe_file=$FOXE_FILE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.assets.outputs.foxe_file }}
+          generate_release_notes: true
+          body: |
+            ## Extension Registry
+
+            To register this version in [foxglove/extension-registry](https://github.com/foxglove/extension-registry), use:
+
+            ```
+            sha256sum: ${{ steps.assets.outputs.sha256 }}
+            foxe: https://github.com/selfpatch/ros2_medkit_foxglove_extension/releases/download/${{ steps.assets.outputs.tag }}/${{ steps.assets.outputs.foxe_file }}
+            ```
