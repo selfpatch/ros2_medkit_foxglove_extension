@@ -44,7 +44,15 @@ jobs:
       - name: Prepare release assets
         id: assets
         run: |
-          FOXE_FILE=$(ls *.foxe)
+          files=( *.foxe )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No .foxe files found"
+            exit 1
+          elif [ ${#files[@]} -gt 1 ]; then
+            echo "::error::Expected exactly one .foxe file, found ${#files[@]}: ${files[*]}"
+            exit 1
+          fi
+          FOXE_FILE="${files[0]}"
           SHA256=$(sha256sum "$FOXE_FILE" | awk '{print $1}')
           echo "foxe_file=$FOXE_FILE" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
