@@ -44,6 +44,7 @@ jobs:
       - name: Prepare release assets
         id: assets
         run: |
+          shopt -s nullglob
           files=( *.foxe )
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::No .foxe files found"
