@@ -77,10 +77,8 @@ The extension uses inline styles (no external CSS) because Foxglove sandboxes ex
 
 Releases are automated via GitHub Actions. To publish a new version:
 
-1. Bump `version` in `package.json`
-2. Commit: `git commit -am "chore: bump version to X.Y.Z"`
-3. Tag: `git tag vX.Y.Z`
-4. Push: `git push origin main && git push origin vX.Y.Z`
+1. Bump version: `npm version X.Y.Z` (updates both `package.json` and `package-lock.json`, creates a commit and tag)
+2. Push: `git push origin main && git push origin vX.Y.Z`
 
 CI will validate that the tag matches `package.json`, build the `.foxe`, and create a GitHub Release with:
 - The `.foxe` file as a downloadable asset
