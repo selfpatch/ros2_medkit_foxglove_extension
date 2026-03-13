@@ -236,7 +236,7 @@ export interface BulkDataList {
 // =============================================================================
 
 export interface VersionInfo {
-  sovd_info: Array<{
+  items: Array<{
     base_uri: string;
     version: string;
     vendor_info?: { name: string; version: string };
