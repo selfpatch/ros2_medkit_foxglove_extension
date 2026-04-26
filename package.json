@@ -20,15 +20,21 @@
     "local-install": "foxglove-extension install",
     "package": "foxglove-extension package",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "foxglove:prepublish": "foxglove-extension build --mode production"
   },
   "devDependencies": {
     "@foxglove/extension": "^2.45.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "create-foxglove-extension": "^1.1.2",
+    "jsdom": "^29.0.2",
     "react": "^18",
     "react-dom": "^18",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.5"
   }
 }
