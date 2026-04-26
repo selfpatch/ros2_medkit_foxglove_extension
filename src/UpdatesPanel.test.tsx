@@ -12,8 +12,8 @@ function fakeApi(overrides: Partial<UpdatesApi>): UpdatesApi {
   return {
     listUpdates: vi.fn(async () => []),
     getStatus: vi.fn(async () => ({ status: "Idle" })),
-    prepare: vi.fn(),
-    execute: vi.fn(),
+    prepare: vi.fn(async () => {}),
+    execute: vi.fn(async () => {}),
     ...overrides,
   } as UpdatesApi;
 }

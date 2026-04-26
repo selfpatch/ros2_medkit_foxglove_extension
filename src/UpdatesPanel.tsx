@@ -105,7 +105,9 @@ export function UpdatesPanelView({
                   <button
                     disabled={row.kind === "Uninstall"}
                     onClick={() => {
-                      void api.prepare(row.id);
+                      api.prepare(row.id).catch((e: unknown) => {
+                        setError(String(e));
+                      });
                     }}
                     style={{ marginRight: 6 }}
                   >
@@ -113,7 +115,9 @@ export function UpdatesPanelView({
                   </button>
                   <button
                     onClick={() => {
-                      void api.execute(row.id);
+                      api.execute(row.id).catch((e: unknown) => {
+                        setError(String(e));
+                      });
                     }}
                   >
                     Execute
