@@ -132,6 +132,25 @@ export async function triggerAutomated(
     await ensureOk(res);
 }
 
+/** POST /updates - register a new update package (201 Created). The body
+ * is the SOVD update detail object (id + update_name + one of
+ * added/updated/removed_components, plus any x_* extensions the gateway's
+ * UpdateProvider plugin understands). */
+export async function registerUpdate(
+    baseUrl: string,
+    metadata: Record<string, unknown>,
+    fetchImpl: typeof fetch = fetch,
+    signal?: AbortSignal,
+): Promise<void> {
+    const res = await fetchImpl(`${baseUrl}/updates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(metadata),
+        signal,
+    });
+    await ensureOk(res);
+}
+
 /** DELETE /updates/{id} - remove the update package (204 No Content). */
 export async function deleteUpdate(
     baseUrl: string,

@@ -25,6 +25,7 @@ import {
     fetchUpdateIds,
     fetchUpdateStatus,
     fetchUpdateDetail,
+    registerUpdate,
     triggerPrepare,
     triggerExecute,
     triggerAutomated,
@@ -93,6 +94,10 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
     const [detailFor, setDetailFor] = useState<string | undefined>();
     const [detail, setDetail] = useState<Record<string, unknown> | undefined>();
     const [detailLoading, setDetailLoading] = useState(false);
+    const [registerOpen, setRegisterOpen] = useState(false);
+    const [registerJson, setRegisterJson] = useState<string>("");
+    const [registerError, setRegisterError] = useState<string | undefined>();
+    const [registerBusy, setRegisterBusy] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
     const fImpl = fetchImpl ?? fetch;
 
@@ -191,13 +196,60 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
         setDetail(undefined);
     }, []);
 
+    const openRegister = useCallback(() => {
+        setRegisterError(undefined);
+        // Sensible default template - mirrors what pack_artifact.py emits.
+        setRegisterJson(
+            JSON.stringify(
+                {
+                    id: "my_update_1_0_0",
+                    update_name: "My update 1.0.0",
+                    automated: false,
+                    origins: ["remote"],
+                    notes: "",
+                    updated_components: ["target_node"],
+                    x_medkit_target_package: "my_package",
+                    x_medkit_executable: "my_node",
+                    x_medkit_artifact_url: "/artifacts/my_package-1.0.0.tar.gz",
+                },
+                null,
+                2,
+            ),
+        );
+        setRegisterOpen(true);
+    }, []);
+
+    const submitRegister = useCallback(async () => {
+        let parsed: Record<string, unknown>;
+        try {
+            parsed = JSON.parse(registerJson);
+        } catch (e) {
+            setRegisterError("Invalid JSON: " + (e instanceof Error ? e.message : String(e)));
+            return;
+        }
+        setRegisterBusy(true);
+        setRegisterError(undefined);
+        try {
+            await registerUpdate(baseUrl, parsed, fImpl);
+            setRegisterOpen(false);
+            await refresh();
+        } catch (e) {
+            setRegisterError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setRegisterBusy(false);
+        }
+    }, [baseUrl, fImpl, refresh, registerJson]);
+
     const sorted = useMemo(() => [...entries].sort((a, b) => a.id.localeCompare(b.id)), [entries]);
 
     return (
         <div style={{ padding: 12, fontFamily: "system-ui", color: "#e5e7eb", height: "100%", overflow: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                 <h2 style={{ margin: 0 }}>Updates</h2>
-                <button onClick={() => void refresh()}>Refresh</button>
+                <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={openRegister}>Register</button>
+                    <button onClick={() => void refresh()}>Refresh</button>
+                </div>
             </div>
 
             {notAvailable && (
@@ -286,6 +338,87 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                     );
                 })}
             </ul>
+
+            {registerOpen && (
+                <div
+                    role="dialog"
+                    aria-label="Register update"
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.5)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 100,
+                    }}
+                    onClick={() => !registerBusy && setRegisterOpen(false)}
+                >
+                    <div
+                        style={{
+                            background: "#1f2937",
+                            color: "#e5e7eb",
+                            padding: 16,
+                            borderRadius: 8,
+                            minWidth: 520,
+                            maxWidth: "90%",
+                            maxHeight: "80%",
+                            overflow: "auto",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                            <strong>Register update</strong>
+                            <button onClick={() => setRegisterOpen(false)} disabled={registerBusy}>
+                                Close
+                            </button>
+                        </div>
+                        <p style={{ fontSize: 12, color: "#9ca3af", margin: "0 0 8px" }}>
+                            POST <code>/updates</code> with SOVD ISO 17978-3 metadata. Pick exactly one of
+                            <code> updated_components</code>, <code>added_components</code>, <code>removed_components</code>
+                            to set the operation kind. <code>x_medkit_*</code> fields are vendor extensions
+                            consumed by the gateway&apos;s UpdateProvider plugin.
+                        </p>
+                        <textarea
+                            value={registerJson}
+                            onChange={(e) => setRegisterJson(e.target.value)}
+                            disabled={registerBusy}
+                            spellCheck={false}
+                            style={{
+                                width: "100%",
+                                minHeight: 280,
+                                fontFamily: "ui-monospace, monospace",
+                                fontSize: 12,
+                                background: "#0f172a",
+                                color: "#e5e7eb",
+                                border: "1px solid #374151",
+                                borderRadius: 4,
+                                padding: 8,
+                                boxSizing: "border-box",
+                            }}
+                        />
+                        {registerError && (
+                            <div style={{ color: "#ef4444", marginTop: 8, fontSize: 12 }} role="alert">
+                                {registerError}
+                            </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+                            <button
+                                onClick={() => setRegisterOpen(false)}
+                                disabled={registerBusy}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => void submitRegister()}
+                                disabled={registerBusy}
+                            >
+                                {registerBusy ? "Registering..." : "Register"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {detailFor && (
                 <div

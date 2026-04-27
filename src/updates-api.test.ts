@@ -5,6 +5,7 @@ import {
     fetchUpdateIds,
     fetchUpdateStatus,
     fetchUpdateDetail,
+    registerUpdate,
     triggerPrepare,
     triggerExecute,
     triggerAutomated,
@@ -110,6 +111,20 @@ describe("trigger* mutations", () => {
         expect(f).toHaveBeenCalledWith(
             `${BASE}/updates/u1/automated`,
             expect.objectContaining({ method: "PUT" }),
+        );
+    });
+
+    it("registerUpdate POSTs metadata as JSON body", async () => {
+        const f = vi.fn(async () => new Response(null, { status: 201 })) as unknown as typeof fetch;
+        const meta = { id: "u9", update_name: "manual", updated_components: ["x"] };
+        await registerUpdate(BASE, meta, f);
+        expect(f).toHaveBeenCalledWith(
+            `${BASE}/updates`,
+            expect.objectContaining({
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(meta),
+            }),
         );
     });
 
