@@ -10,6 +10,7 @@ import type {
     RenderState,
 } from "@foxglove/extension";
 import {
+    type CSSProperties,
     type ReactElement,
     useCallback,
     useEffect,
@@ -39,6 +40,8 @@ import {
     onSharedConnectionChange,
     saveSharedConnection,
 } from "./shared-connection";
+import * as S from "./styles";
+import type { Theme } from "./styles";
 
 const IDLE_INTERVAL_MS = 5000;
 const ACTIVE_INTERVAL_MS = 2000;
@@ -48,12 +51,20 @@ interface UpdateEntry {
     status: UpdateStatus | null;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-    pending: "#3b82f6",
-    inProgress: "#3b82f6",
-    completed: "#22c55e",
-    failed: "#ef4444",
-};
+function statusColor(status: string | undefined, theme: Theme): string {
+    const c = S.colors(theme);
+    switch (status) {
+        case "pending":
+        case "inProgress":
+            return c.accent;
+        case "completed":
+            return c.success;
+        case "failed":
+            return c.critical;
+        default:
+            return c.textMuted;
+    }
+}
 
 // Mirrors web UI's actionButtonsForStatus.
 function actionsForStatus(status: string | undefined): string[] {
@@ -80,13 +91,51 @@ const ACTION_LABEL: Record<string, string> = {
     delete: "Delete",
 };
 
+// Responsive modal: backdrop fills the panel, card grows up to ~600px but
+// shrinks to 100% width on narrow Foxglove panels (no minWidth). Scrolls
+// internally if the content overflows.
+const modalBackdrop: CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(0,0,0,0.5)",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    padding: 12,
+    zIndex: 100,
+    overflow: "auto",
+};
+
+function modalCard(theme: Theme): CSSProperties {
+    const c = S.colors(theme);
+    return {
+        background: c.bgCard,
+        color: c.text,
+        padding: 12,
+        borderRadius: 6,
+        border: `1px solid ${c.border}`,
+        width: "100%",
+        maxWidth: 600,
+        maxHeight: "100%",
+        overflow: "auto",
+        boxSizing: "border-box",
+    };
+}
+
 export interface UpdatesPanelViewProps {
     baseUrl: string;
     pollMs?: number;
     fetchImpl?: typeof fetch;
+    theme?: Theme;
 }
 
-export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelViewProps): JSX.Element {
+export function UpdatesPanelView({
+    baseUrl,
+    pollMs,
+    fetchImpl,
+    theme = "dark",
+}: UpdatesPanelViewProps): JSX.Element {
+    const c = S.colors(theme);
     const [entries, setEntries] = useState<UpdateEntry[]>([]);
     const [error, setError] = useState<string | undefined>();
     const [notAvailable, setNotAvailable] = useState(false);
@@ -243,59 +292,83 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
     const sorted = useMemo(() => [...entries].sort((a, b) => a.id.localeCompare(b.id)), [entries]);
 
     return (
-        <div style={{ padding: 12, fontFamily: "system-ui", color: "#e5e7eb", height: "100%", overflow: "auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <h2 style={{ margin: 0 }}>Updates</h2>
-                <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={openRegister}>Register</button>
-                    <button onClick={() => void refresh()}>Refresh</button>
+        <div style={S.panelRoot(theme)}>
+            <div
+                style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 6,
+                    marginBottom: 8,
+                }}
+            >
+                <h2 style={{ ...S.heading(theme), margin: 0, minWidth: 0 }}>Updates</h2>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <button style={S.btn(theme, "ghost")} onClick={openRegister}>
+                        Register
+                    </button>
+                    <button style={S.btn(theme, "ghost")} onClick={() => void refresh()}>
+                        Refresh
+                    </button>
                 </div>
             </div>
 
             {notAvailable && (
-                <div style={{ color: "#9ca3af", padding: 8, border: "1px dashed #374151", borderRadius: 4 }}>
+                <div
+                    style={{
+                        color: c.textMuted,
+                        padding: 8,
+                        border: `1px dashed ${c.border}`,
+                        borderRadius: 4,
+                        fontSize: 12,
+                    }}
+                >
                     The gateway has no UpdateProvider configured (HTTP 501).
                 </div>
             )}
             {error && (
-                <div style={{ color: "#ef4444", marginBottom: 8 }} role="alert">
+                <div style={S.errorBox(theme)} role="alert">
                     {error}
                 </div>
             )}
 
             {!notAvailable && sorted.length === 0 && !error && (
-                <div style={{ color: "#9ca3af" }}>No updates registered.</div>
+                <div style={S.emptyState(theme)}>No updates registered.</div>
             )}
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                 {sorted.map((entry) => {
                     const statusLabel = entry.status?.status ?? "no status";
-                    const color = STATUS_COLOR[entry.status?.status ?? ""] ?? "#6b7280";
+                    const sColor = statusColor(entry.status?.status, theme);
                     const actions = actionsForStatus(entry.status?.status);
                     const isBusy = busyIds.has(entry.id);
                     return (
-                        <li
-                            key={entry.id}
-                            style={{
-                                border: "1px solid #374151",
-                                borderRadius: 4,
-                                padding: 8,
-                                marginBottom: 8,
-                            }}
-                        >
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <span style={{ fontFamily: "monospace" }}>{entry.id}</span>
+                        <li key={entry.id} style={S.card(theme)}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    gap: 6,
+                                }}
+                            >
                                 <span
+                                    title={entry.id}
                                     style={{
-                                        background: color,
-                                        color: "white",
-                                        padding: "2px 6px",
-                                        borderRadius: 4,
+                                        fontFamily: "ui-monospace, monospace",
                                         fontSize: 12,
+                                        minWidth: 0,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        flex: "1 1 auto",
                                     }}
                                 >
-                                    {statusLabel}
+                                    {entry.id}
                                 </span>
+                                <span style={S.badge("#fff", sColor)}>{statusLabel}</span>
                             </div>
                             {entry.status?.progress !== undefined && (
                                 <div
@@ -305,7 +378,7 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                                     aria-valuemax={100}
                                     style={{
                                         height: 4,
-                                        background: "#1f2937",
+                                        background: c.bgAlt,
                                         borderRadius: 2,
                                         marginTop: 6,
                                         overflow: "hidden",
@@ -315,18 +388,30 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                                         style={{
                                             width: `${Math.min(100, Math.max(0, entry.status.progress))}%`,
                                             height: "100%",
-                                            background: color,
+                                            background: sColor,
                                         }}
                                     />
                                 </div>
                             )}
-                            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                                <button onClick={() => void openDetail(entry.id)} disabled={isBusy}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: 6,
+                                    marginTop: 8,
+                                    flexWrap: "wrap",
+                                }}
+                            >
+                                <button
+                                    style={S.btn(theme, "ghost")}
+                                    onClick={() => void openDetail(entry.id)}
+                                    disabled={isBusy}
+                                >
                                     Details
                                 </button>
                                 {actions.map((action) => (
                                     <button
                                         key={action}
+                                        style={S.btn(theme, action === "delete" ? "danger" : "primary")}
                                         disabled={isBusy}
                                         onClick={() => void runAction(entry.id, action)}
                                     >
@@ -343,41 +428,32 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                 <div
                     role="dialog"
                     aria-label="Register update"
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        background: "rgba(0,0,0,0.5)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        zIndex: 100,
-                    }}
+                    style={modalBackdrop}
                     onClick={() => !registerBusy && setRegisterOpen(false)}
                 >
-                    <div
-                        style={{
-                            background: "#1f2937",
-                            color: "#e5e7eb",
-                            padding: 16,
-                            borderRadius: 8,
-                            minWidth: 520,
-                            maxWidth: "90%",
-                            maxHeight: "80%",
-                            overflow: "auto",
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                            <strong>Register update</strong>
-                            <button onClick={() => setRegisterOpen(false)} disabled={registerBusy}>
+                    <div style={modalCard(theme)} onClick={(e) => e.stopPropagation()}>
+                        <div
+                            style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 6,
+                                justifyContent: "space-between",
+                                marginBottom: 8,
+                            }}
+                        >
+                            <strong style={{ minWidth: 0 }}>Register update</strong>
+                            <button
+                                style={S.btn(theme, "ghost")}
+                                onClick={() => setRegisterOpen(false)}
+                                disabled={registerBusy}
+                            >
                                 Close
                             </button>
                         </div>
-                        <p style={{ fontSize: 12, color: "#9ca3af", margin: "0 0 8px" }}>
+                        <p style={{ fontSize: 12, color: c.textMuted, margin: "0 0 8px" }}>
                             POST <code>/updates</code> with SOVD ISO 17978-3 metadata. Pick exactly one of
                             <code> updated_components</code>, <code>added_components</code>, <code>removed_components</code>
-                            to set the operation kind. <code>x_medkit_*</code> fields are vendor extensions
-                            consumed by the gateway&apos;s UpdateProvider plugin.
+                            to set the operation kind. <code>x_medkit_*</code> fields are vendor extensions.
                         </p>
                         <textarea
                             value={registerJson}
@@ -385,31 +461,36 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                             disabled={registerBusy}
                             spellCheck={false}
                             style={{
+                                ...S.input(theme),
                                 width: "100%",
-                                minHeight: 280,
+                                minHeight: 220,
                                 fontFamily: "ui-monospace, monospace",
-                                fontSize: 12,
-                                background: "#0f172a",
-                                color: "#e5e7eb",
-                                border: "1px solid #374151",
-                                borderRadius: 4,
-                                padding: 8,
-                                boxSizing: "border-box",
+                                resize: "vertical",
                             }}
                         />
                         {registerError && (
-                            <div style={{ color: "#ef4444", marginTop: 8, fontSize: 12 }} role="alert">
+                            <div style={S.errorBox(theme)} role="alert">
                                 {registerError}
                             </div>
                         )}
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+                        <div
+                            style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                justifyContent: "flex-end",
+                                gap: 6,
+                                marginTop: 8,
+                            }}
+                        >
                             <button
+                                style={S.btn(theme, "ghost")}
                                 onClick={() => setRegisterOpen(false)}
                                 disabled={registerBusy}
                             >
                                 Cancel
                             </button>
                             <button
+                                style={S.btn(theme, "primary")}
                                 onClick={() => void submitRegister()}
                                 disabled={registerBusy}
                             >
@@ -424,38 +505,51 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
                 <div
                     role="dialog"
                     aria-label="Update details"
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        background: "rgba(0,0,0,0.5)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        zIndex: 100,
-                    }}
+                    style={modalBackdrop}
                     onClick={closeDetail}
                 >
-                    <div
-                        style={{
-                            background: "#1f2937",
-                            color: "#e5e7eb",
-                            padding: 16,
-                            borderRadius: 8,
-                            minWidth: 480,
-                            maxWidth: "90%",
-                            maxHeight: "80%",
-                            overflow: "auto",
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                            <strong style={{ fontFamily: "monospace" }}>{detailFor}</strong>
-                            <button onClick={closeDetail}>Close</button>
+                    <div style={modalCard(theme)} onClick={(e) => e.stopPropagation()}>
+                        <div
+                            style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 6,
+                                justifyContent: "space-between",
+                                marginBottom: 8,
+                            }}
+                        >
+                            <strong
+                                title={detailFor}
+                                style={{
+                                    fontFamily: "ui-monospace, monospace",
+                                    minWidth: 0,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    flex: "1 1 auto",
+                                }}
+                            >
+                                {detailFor}
+                            </strong>
+                            <button style={S.btn(theme, "ghost")} onClick={closeDetail}>
+                                Close
+                            </button>
                         </div>
                         {detailLoading ? (
-                            <div>Loading...</div>
+                            <div style={{ color: c.textMuted, fontSize: 12 }}>Loading...</div>
                         ) : (
-                            <pre style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>
+                            <pre
+                                style={{
+                                    fontSize: 12,
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-word",
+                                    margin: 0,
+                                    background: c.bgAlt,
+                                    padding: 8,
+                                    borderRadius: 4,
+                                    color: c.text,
+                                }}
+                            >
                                 {JSON.stringify(detail, null, 2)}
                             </pre>
                         )}
@@ -479,11 +573,15 @@ function UpdatesPanelWrapper({
     const [conn, setConn] = useState<GatewayConnection>(() =>
         loadSharedConnection(context.initialState as Partial<GatewayConnection>),
     );
+    const [theme, setTheme] = useState<Theme>("dark");
     const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
 
     useLayoutEffect(() => {
         context.watch("colorScheme");
-        context.onRender = (_rs: Immutable<RenderState>, done) => {
+        context.onRender = (rs: Immutable<RenderState>, done) => {
+            if (rs.colorScheme === "light" || rs.colorScheme === "dark") {
+                setTheme(rs.colorScheme);
+            }
             setRenderDone(() => done);
         };
     }, [context]);
@@ -536,7 +634,7 @@ function UpdatesPanelWrapper({
         });
     }, [context, conn]);
 
-    return <UpdatesPanelView baseUrl={joinConnection(conn)} />;
+    return <UpdatesPanelView baseUrl={joinConnection(conn)} theme={theme} />;
 }
 
 export function initUpdatesPanel(context: PanelExtensionContext): () => void {
