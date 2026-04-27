@@ -161,12 +161,18 @@ function EntityBrowserPanel({
       setClient(c);
       setConnected(true);
 
-      // Load areas and functions in parallel
+      // Load areas and functions in parallel.
       const [areas, funcs] = await Promise.all([
         c.listAreas(),
         c.listFunctions().catch(() => [] as SovdEntity[]),
       ]);
-      setTree(areas.map((a) => ({ entity: a, isExpanded: false, isLoading: false })));
+      // Gateways running in runtime_only mode without a manifest report
+      // zero areas but still expose synthetic components. Fall back to
+      // /components so the tree is not empty just because no manifest is
+      // configured.
+      const roots: SovdEntity[] =
+        areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+      setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
       setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
       setConnError(err instanceof Error ? err.message : "Connection failed");
