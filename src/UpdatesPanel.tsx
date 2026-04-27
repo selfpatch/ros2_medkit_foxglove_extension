@@ -4,8 +4,20 @@
 // ros2_medkit_web_ui's UpdatesDashboard so the two clients stay aligned:
 // list IDs from /updates, fetch /status per ID, lazy-load details.
 
-import type { PanelExtensionContext } from "@foxglove/extension";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+    PanelExtensionContext,
+    Immutable,
+    RenderState,
+} from "@foxglove/extension";
+import {
+    type ReactElement,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -19,6 +31,24 @@ import {
     deleteUpdate,
     type UpdateStatus,
 } from "./updates-api";
+
+// Defaults match the other panels in this extension (EntityBrowserPanel,
+// FaultsDashboardPanel) so the user gets a consistent settings UX.
+interface UpdatesPanelState {
+    gatewayUrl: string;
+    basePath: string;
+}
+
+const DEFAULT_STATE: UpdatesPanelState = {
+    gatewayUrl: "http://localhost:8080",
+    basePath: "api/v1",
+};
+
+function joinBase(state: UpdatesPanelState): string {
+    const url = state.gatewayUrl.replace(/\/$/, "");
+    const path = state.basePath.replace(/^\/|\/$/g, "");
+    return path ? `${url}/${path}` : url;
+}
 
 const IDLE_INTERVAL_MS = 5000;
 const ACTIVE_INTERVAL_MS = 2000;
@@ -314,11 +344,76 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
     );
 }
 
+// Wrapper component that owns the Foxglove panel lifecycle: state
+// persistence (context.saveState), the settings sidebar editor
+// (context.updatePanelSettingsEditor), and the colorScheme watcher. Hands
+// the resolved baseUrl down to the pure UpdatesPanelView (kept testable
+// without a Foxglove runtime).
+function UpdatesPanelWrapper({
+    context,
+}: {
+    context: PanelExtensionContext;
+}): ReactElement {
+    const [state, setState] = useState<UpdatesPanelState>(() => ({
+        ...DEFAULT_STATE,
+        ...(context.initialState as Partial<UpdatesPanelState>),
+    }));
+    const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
+
+    useLayoutEffect(() => {
+        context.watch("colorScheme");
+        context.onRender = (_rs: Immutable<RenderState>, done) => {
+            setRenderDone(() => done);
+        };
+    }, [context]);
+
+    useEffect(() => {
+        renderDone?.();
+    }, [renderDone]);
+
+    useEffect(() => {
+        context.saveState(state);
+    }, [context, state]);
+
+    useEffect(() => {
+        context.updatePanelSettingsEditor({
+            actionHandler: (action) => {
+                if (action.action !== "update") return;
+                const [section, key] = action.payload.path;
+                if (section !== "conn") return;
+                if (key === "gatewayUrl") {
+                    setState((p) => ({ ...p, gatewayUrl: action.payload.value as string }));
+                }
+                if (key === "basePath") {
+                    setState((p) => ({ ...p, basePath: action.payload.value as string }));
+                }
+            },
+            nodes: {
+                conn: {
+                    label: "Gateway Connection",
+                    fields: {
+                        gatewayUrl: {
+                            label: "Server URL",
+                            input: "string",
+                            value: state.gatewayUrl,
+                        },
+                        basePath: {
+                            label: "Base path",
+                            input: "string",
+                            value: state.basePath,
+                        },
+                    },
+                },
+            },
+        });
+    }, [context, state]);
+
+    const baseUrl = joinBase(state);
+    return <UpdatesPanelView baseUrl={baseUrl} />;
+}
+
 export function initUpdatesPanel(context: PanelExtensionContext): () => void {
-    const baseUrl =
-        (context.initialState as { baseUrl?: string } | undefined)?.baseUrl ??
-        "http://localhost:8080/api/v1";
     const root = createRoot(context.panelElement);
-    root.render(<UpdatesPanelView baseUrl={baseUrl} />);
+    root.render(<UpdatesPanelWrapper context={context} />);
     return () => root.unmount();
 }
