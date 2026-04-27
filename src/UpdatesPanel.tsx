@@ -4,17 +4,12 @@
 // ros2_medkit_web_ui's UpdatesDashboard so the two clients stay aligned:
 // list IDs from /updates, fetch /status per ID, lazy-load details.
 
-import type {
-    PanelExtensionContext,
-    Immutable,
-    RenderState,
-} from "@foxglove/extension";
+import type { PanelExtensionContext } from "@foxglove/extension";
 import {
     type CSSProperties,
     type ReactElement,
     useCallback,
     useEffect,
-    useLayoutEffect,
     useMemo,
     useRef,
     useState,
@@ -33,13 +28,8 @@ import {
     deleteUpdate,
     type UpdateStatus,
 } from "./updates-api";
-import {
-    type GatewayConnection,
-    joinConnection,
-    loadSharedConnection,
-    onSharedConnectionChange,
-    saveSharedConnection,
-} from "./shared-connection";
+import { type GatewayConnection, joinConnection } from "./shared-connection";
+import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -570,36 +560,17 @@ function UpdatesPanelWrapper({
 }: {
     context: PanelExtensionContext;
 }): ReactElement {
-    const [conn, setConn] = useState<GatewayConnection>(() =>
-        loadSharedConnection(context.initialState as Partial<GatewayConnection>),
+    const { conn, update } = useSharedConnection(
+        context.initialState as Partial<GatewayConnection>,
     );
-    const [theme, setTheme] = useState<Theme>("dark");
-    const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
+    const theme = useColorSchemeTheme(context);
 
-    useLayoutEffect(() => {
-        context.watch("colorScheme");
-        context.onRender = (rs: Immutable<RenderState>, done) => {
-            if (rs.colorScheme === "light" || rs.colorScheme === "dark") {
-                setTheme(rs.colorScheme);
-            }
-            setRenderDone(() => done);
-        };
-    }, [context]);
-
-    useEffect(() => {
-        renderDone?.();
-    }, [renderDone]);
-
-    // Keep Foxglove's per-panel state for backwards compat (older layouts
-    // that persisted these keys still resume cleanly), but the source of
-    // truth lives in shared-connection.
+    // Persist via Foxglove for layouts that resume without localStorage
+    // (e.g. exported layout files); shared-connection remains the runtime
+    // source of truth.
     useEffect(() => {
         context.saveState(conn);
     }, [context, conn]);
-
-    // React to changes coming from other panels (Entity Browser, Faults
-    // Dashboard, or another window/tab).
-    useEffect(() => onSharedConnectionChange(setConn), []);
 
     useEffect(() => {
         context.updatePanelSettingsEditor({
@@ -611,28 +582,19 @@ function UpdatesPanelWrapper({
                 if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
                 else if (key === "basePath") next.basePath = action.payload.value as string;
                 else return;
-                saveSharedConnection(next); // broadcast first
-                setConn(next);
+                update(next);
             },
             nodes: {
                 conn: {
                     label: "Gateway Connection",
                     fields: {
-                        gatewayUrl: {
-                            label: "Server URL",
-                            input: "string",
-                            value: conn.gatewayUrl,
-                        },
-                        basePath: {
-                            label: "Base path",
-                            input: "string",
-                            value: conn.basePath,
-                        },
+                        gatewayUrl: { label: "Server URL", input: "string", value: conn.gatewayUrl },
+                        basePath: { label: "Base path", input: "string", value: conn.basePath },
                     },
                 },
             },
         });
-    }, [context, conn]);
+    }, [context, conn, update]);
 
     return <UpdatesPanelView baseUrl={joinConnection(conn)} theme={theme} />;
 }

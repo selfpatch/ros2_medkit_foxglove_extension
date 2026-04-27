@@ -5,15 +5,10 @@
  * Supports SSE fault streaming, severity filtering, and fault clearing.
  */
 
-import {
-  type PanelExtensionContext,
-  type Immutable,
-  type RenderState,
-} from "@foxglove/extension";
+import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
-  useLayoutEffect,
   useState,
   useCallback,
   useRef,
@@ -21,12 +16,8 @@ import {
 import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
-import {
-  type GatewayConnection,
-  loadSharedConnection,
-  onSharedConnectionChange,
-  saveSharedConnection,
-} from "./shared-connection";
+import { type GatewayConnection } from "./shared-connection";
+import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import type { Fault, FaultSeverity, FaultResponse, Snapshot, SovdResourceEntityType } from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
@@ -38,15 +29,17 @@ import type { Theme } from "./styles";
 
 // gatewayUrl + basePath come from shared-connection so all panels share
 // one Server URL setting. Panel-specific knobs stay local.
-interface PanelState extends GatewayConnection {
+interface PanelKnobs {
   refreshIntervalSec: number;
   enableStream: boolean;
 }
 
-const DEFAULT_PANEL_KNOBS = {
+interface PanelState extends GatewayConnection, PanelKnobs {}
+
+const DEFAULT_PANEL_KNOBS: PanelKnobs = {
   refreshIntervalSec: 5,
   enableStream: true,
-} as const;
+};
 
 // ---------------------------------------------------------------------------
 // Panel Component
@@ -57,24 +50,21 @@ function FaultsDashboardPanel({
 }: {
   context: PanelExtensionContext;
 }): ReactElement {
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
+  // Theme + shared connection come from the panel hooks (deduped across
+  // EntityBrowserPanel, FaultsDashboardPanel, UpdatesPanel).
+  const theme = useColorSchemeTheme(context);
+  const { conn, update: updateConnection } = useSharedConnection(
+    context.initialState as Partial<GatewayConnection>,
+  );
 
-  const [state, setState] = useState<PanelState>(() => {
-    const initial = (context.initialState ?? {}) as Partial<PanelState>;
-    return {
-      ...DEFAULT_PANEL_KNOBS,
-      ...initial,
-      ...loadSharedConnection(initial),
-    };
-  });
+  // Panel-specific knobs that are NOT shared.
+  const [knobs, setKnobs] = useState<PanelKnobs>(() => ({
+    ...DEFAULT_PANEL_KNOBS,
+    ...((context.initialState ?? {}) as Partial<PanelKnobs>),
+  }));
 
-  // Pick up gateway URL changes broadcast by other panels.
-  useEffect(() => {
-    return onSharedConnectionChange((conn) => {
-      setState((p) => ({ ...p, ...conn }));
-    });
-  }, []);
+  const state: PanelState = { ...conn, ...knobs };
+
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -88,25 +78,11 @@ function FaultsDashboardPanel({
   const [downloading, setDownloading] = useState<string | null>(null);
   const streamCleanup = useRef<(() => void) | null>(null);
 
-  // ── Foxglove lifecycle ──────────────────────────────────────────
-
-  useLayoutEffect(() => {
-    context.watch("colorScheme");
-    context.onRender = (_rs: Immutable<RenderState>, done) => {
-      if (_rs.colorScheme) setTheme(_rs.colorScheme);
-      setRenderDone(() => done);
-    };
-  }, [context]);
-
-  useEffect(() => {
-    renderDone?.();
-  }, [renderDone]);
+  // ── Foxglove state persistence + settings editor ───────────────
 
   useEffect(() => {
     context.saveState(state);
   }, [context, state]);
-
-  // ── Settings ────────────────────────────────────────────────────
 
   useEffect(() => {
     context.updatePanelSettingsEditor({
@@ -115,23 +91,17 @@ function FaultsDashboardPanel({
         const [section, key] = action.payload.path;
         if (section !== "conn") return;
         if (key === "gatewayUrl" || key === "basePath") {
-          // Connection settings are shared across all panels in this
-          // extension - broadcast the change so peers update too.
-          setState((p) => {
-            const nextConn: GatewayConnection = {
-              gatewayUrl: key === "gatewayUrl" ? (action.payload.value as string) : p.gatewayUrl,
-              basePath: key === "basePath" ? (action.payload.value as string) : p.basePath,
-            };
-            saveSharedConnection(nextConn);
-            return { ...p, ...nextConn };
+          updateConnection({
+            gatewayUrl: key === "gatewayUrl" ? (action.payload.value as string) : conn.gatewayUrl,
+            basePath: key === "basePath" ? (action.payload.value as string) : conn.basePath,
           });
           return;
         }
         if (key === "refreshInterval") {
-          setState((p) => ({ ...p, refreshIntervalSec: Number(action.payload.value) }));
+          setKnobs((p) => ({ ...p, refreshIntervalSec: Number(action.payload.value) }));
         }
         if (key === "enableStream") {
-          setState((p) => ({ ...p, enableStream: action.payload.value === "true" }));
+          setKnobs((p) => ({ ...p, enableStream: action.payload.value === "true" }));
         }
       },
       nodes: {

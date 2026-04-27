@@ -5,27 +5,18 @@
  * Shows entity details, topic data, configurations, operations, and faults for selected entity.
  */
 
-import {
-  type PanelExtensionContext,
-  type Immutable,
-  type RenderState,
-} from "@foxglove/extension";
+import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
-  useLayoutEffect,
   useState,
   useCallback,
 } from "react";
 import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
-import {
-  type GatewayConnection,
-  loadSharedConnection,
-  onSharedConnectionChange,
-  saveSharedConnection,
-} from "./shared-connection";
+import { type GatewayConnection } from "./shared-connection";
+import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -67,18 +58,14 @@ function EntityBrowserPanel({
 }: {
   context: PanelExtensionContext;
 }): ReactElement {
-  // Foxglove integration
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
+  // Foxglove integration: theme follows the host's color scheme.
+  const theme = useColorSchemeTheme(context);
 
-  // Connection (shared across all panels in this extension)
-  const [state, setState] = useState<PanelState>(() =>
-    loadSharedConnection(context.initialState as Partial<PanelState>),
+  // Connection settings shared across every panel in this extension.
+  const { conn: state, update: updateConnection } = useSharedConnection(
+    context.initialState as Partial<PanelState>,
   );
 
-  // React to changes from other panels (Faults Dashboard, Updates Panel,
-  // or another window/tab).
-  useEffect(() => onSharedConnectionChange(setState), []);
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | undefined>();
@@ -101,25 +88,11 @@ function EntityBrowserPanel({
   const [tabLoading, setTabLoading] = useState(false);
   const [tabError, setTabError] = useState<string | undefined>();
 
-  // ── Foxglove lifecycle ──────────────────────────────────────────
-
-  useLayoutEffect(() => {
-    context.watch("colorScheme");
-    context.onRender = (_rs: Immutable<RenderState>, done) => {
-      if (_rs.colorScheme) setTheme(_rs.colorScheme);
-      setRenderDone(() => done);
-    };
-  }, [context]);
-
-  useEffect(() => {
-    renderDone?.();
-  }, [renderDone]);
+  // ── Foxglove state persistence + settings editor ───────────────
 
   useEffect(() => {
     context.saveState(state);
   }, [context, state]);
-
-  // ── Settings editor ─────────────────────────────────────────────
 
   useEffect(() => {
     context.updatePanelSettingsEditor({
@@ -131,9 +104,7 @@ function EntityBrowserPanel({
         if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
         else if (key === "basePath") next.basePath = action.payload.value as string;
         else return;
-        // Broadcast first so peer panels pick up the change immediately.
-        saveSharedConnection(next);
-        setState(next);
+        updateConnection(next);
       },
       nodes: {
         conn: {
@@ -145,7 +116,7 @@ function EntityBrowserPanel({
         },
       },
     });
-  }, [context, state]);
+  }, [context, state, updateConnection]);
 
   // ── Connect ─────────────────────────────────────────────────────
 
