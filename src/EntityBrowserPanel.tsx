@@ -5,21 +5,18 @@
  * Shows entity details, topic data, configurations, operations, and faults for selected entity.
  */
 
-import {
-  type PanelExtensionContext,
-  type Immutable,
-  type RenderState,
-} from "@foxglove/extension";
+import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
-  useLayoutEffect,
   useState,
   useCallback,
 } from "react";
 import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
+import { type GatewayConnection } from "./shared-connection";
+import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -39,15 +36,9 @@ import type { Theme } from "./styles";
 // State
 // ---------------------------------------------------------------------------
 
-interface PanelState {
-  gatewayUrl: string;
-  basePath: string;
-}
-
-const DEFAULT_STATE: PanelState = {
-  gatewayUrl: "http://localhost:8080",
-  basePath: "api/v1",
-};
+// Connection settings live in shared-connection.ts so all three panels in
+// this extension share one Server URL / Base path.
+type PanelState = GatewayConnection;
 
 interface TreeNode {
   entity: SovdEntity;
@@ -67,15 +58,14 @@ function EntityBrowserPanel({
 }: {
   context: PanelExtensionContext;
 }): ReactElement {
-  // Foxglove integration
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
+  // Foxglove integration: theme follows the host's color scheme.
+  const theme = useColorSchemeTheme(context);
 
-  // Connection
-  const [state, setState] = useState<PanelState>(() => ({
-    ...DEFAULT_STATE,
-    ...(context.initialState as Partial<PanelState>),
-  }));
+  // Connection settings shared across every panel in this extension.
+  const { conn: state, update: updateConnection } = useSharedConnection(
+    context.initialState as Partial<PanelState>,
+  );
+
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | undefined>();
@@ -98,37 +88,23 @@ function EntityBrowserPanel({
   const [tabLoading, setTabLoading] = useState(false);
   const [tabError, setTabError] = useState<string | undefined>();
 
-  // ── Foxglove lifecycle ──────────────────────────────────────────
-
-  useLayoutEffect(() => {
-    context.watch("colorScheme");
-    context.onRender = (_rs: Immutable<RenderState>, done) => {
-      if (_rs.colorScheme) setTheme(_rs.colorScheme);
-      setRenderDone(() => done);
-    };
-  }, [context]);
-
-  useEffect(() => {
-    renderDone?.();
-  }, [renderDone]);
+  // ── Foxglove state persistence + settings editor ───────────────
 
   useEffect(() => {
     context.saveState(state);
   }, [context, state]);
-
-  // ── Settings editor ─────────────────────────────────────────────
 
   useEffect(() => {
     context.updatePanelSettingsEditor({
       actionHandler: (action) => {
         if (action.action !== "update") return;
         const [section, key] = action.payload.path;
-        if (section === "conn") {
-          if (key === "gatewayUrl")
-            setState((p) => ({ ...p, gatewayUrl: action.payload.value as string }));
-          if (key === "basePath")
-            setState((p) => ({ ...p, basePath: action.payload.value as string }));
-        }
+        if (section !== "conn") return;
+        const next = { ...state };
+        if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
+        else if (key === "basePath") next.basePath = action.payload.value as string;
+        else return;
+        updateConnection(next);
       },
       nodes: {
         conn: {
@@ -140,7 +116,7 @@ function EntityBrowserPanel({
         },
       },
     });
-  }, [context, state]);
+  }, [context, state, updateConnection]);
 
   // ── Connect ─────────────────────────────────────────────────────
 
@@ -156,12 +132,18 @@ function EntityBrowserPanel({
       setClient(c);
       setConnected(true);
 
-      // Load areas and functions in parallel
+      // Load areas and functions in parallel.
       const [areas, funcs] = await Promise.all([
         c.listAreas(),
         c.listFunctions().catch(() => [] as SovdEntity[]),
       ]);
-      setTree(areas.map((a) => ({ entity: a, isExpanded: false, isLoading: false })));
+      // Gateways running in runtime_only mode without a manifest report
+      // zero areas but still expose synthetic components. Fall back to
+      // /components so the tree is not empty just because no manifest is
+      // configured.
+      const roots: SovdEntity[] =
+        areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+      setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
       setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
       setConnError(err instanceof Error ? err.message : "Connection failed");

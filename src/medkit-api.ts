@@ -114,6 +114,30 @@ export class MedkitApiClient {
     }));
   }
 
+  /** Top-level component list - used as tree roots when /areas is empty
+   * (gateway running in runtime_only mode without a manifest still
+   * discovers synthetic components per ROS namespace). */
+  async listComponents(): Promise<SovdEntity[]> {
+    const raw = await fetchJSON<unknown>(this.url("components"));
+    const items = (Array.isArray(raw)
+      ? raw
+      : ((raw as Record<string, unknown>).items ?? [])) as Array<{
+        id: string;
+        name?: string;
+        description?: string;
+      }>;
+    return items.map((c) => ({
+      id: c.id,
+      // Auto-discovered components come back with name == id (a
+      // hostname-derived hash like 'e9e6f682e4bf'). Prefer the human-
+      // readable description when the name is just the id.
+      name: c.name && c.name !== c.id ? c.name : c.description || c.id,
+      type: "component",
+      href: `/components/${c.id}`,
+      hasChildren: true,
+    }));
+  }
+
   async listAreaComponents(areaId: string): Promise<SovdEntity[]> {
     const raw = await fetchJSON<unknown>(this.url(`areas/${areaId}/components`));
     const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).components ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string; fqn?: string }>;
