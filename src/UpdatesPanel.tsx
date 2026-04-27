@@ -31,24 +31,13 @@ import {
     deleteUpdate,
     type UpdateStatus,
 } from "./updates-api";
-
-// Defaults match the other panels in this extension (EntityBrowserPanel,
-// FaultsDashboardPanel) so the user gets a consistent settings UX.
-interface UpdatesPanelState {
-    gatewayUrl: string;
-    basePath: string;
-}
-
-const DEFAULT_STATE: UpdatesPanelState = {
-    gatewayUrl: "http://localhost:8080",
-    basePath: "api/v1",
-};
-
-function joinBase(state: UpdatesPanelState): string {
-    const url = state.gatewayUrl.replace(/\/$/, "");
-    const path = state.basePath.replace(/^\/|\/$/g, "");
-    return path ? `${url}/${path}` : url;
-}
+import {
+    type GatewayConnection,
+    joinConnection,
+    loadSharedConnection,
+    onSharedConnectionChange,
+    saveSharedConnection,
+} from "./shared-connection";
 
 const IDLE_INTERVAL_MS = 5000;
 const ACTIVE_INTERVAL_MS = 2000;
@@ -344,20 +333,19 @@ export function UpdatesPanelView({ baseUrl, pollMs, fetchImpl }: UpdatesPanelVie
     );
 }
 
-// Wrapper component that owns the Foxglove panel lifecycle: state
-// persistence (context.saveState), the settings sidebar editor
-// (context.updatePanelSettingsEditor), and the colorScheme watcher. Hands
-// the resolved baseUrl down to the pure UpdatesPanelView (kept testable
-// without a Foxglove runtime).
+// Wrapper that owns the Foxglove panel lifecycle: shared gateway-
+// connection settings (synced across all panels in this extension via
+// localStorage + a same-tab CustomEvent), state persistence, and the
+// colorScheme watcher. Hands the resolved baseUrl to the pure
+// UpdatesPanelView (kept testable without a Foxglove runtime).
 function UpdatesPanelWrapper({
     context,
 }: {
     context: PanelExtensionContext;
 }): ReactElement {
-    const [state, setState] = useState<UpdatesPanelState>(() => ({
-        ...DEFAULT_STATE,
-        ...(context.initialState as Partial<UpdatesPanelState>),
-    }));
+    const [conn, setConn] = useState<GatewayConnection>(() =>
+        loadSharedConnection(context.initialState as Partial<GatewayConnection>),
+    );
     const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
 
     useLayoutEffect(() => {
@@ -371,9 +359,16 @@ function UpdatesPanelWrapper({
         renderDone?.();
     }, [renderDone]);
 
+    // Keep Foxglove's per-panel state for backwards compat (older layouts
+    // that persisted these keys still resume cleanly), but the source of
+    // truth lives in shared-connection.
     useEffect(() => {
-        context.saveState(state);
-    }, [context, state]);
+        context.saveState(conn);
+    }, [context, conn]);
+
+    // React to changes coming from other panels (Entity Browser, Faults
+    // Dashboard, or another window/tab).
+    useEffect(() => onSharedConnectionChange(setConn), []);
 
     useEffect(() => {
         context.updatePanelSettingsEditor({
@@ -381,12 +376,12 @@ function UpdatesPanelWrapper({
                 if (action.action !== "update") return;
                 const [section, key] = action.payload.path;
                 if (section !== "conn") return;
-                if (key === "gatewayUrl") {
-                    setState((p) => ({ ...p, gatewayUrl: action.payload.value as string }));
-                }
-                if (key === "basePath") {
-                    setState((p) => ({ ...p, basePath: action.payload.value as string }));
-                }
+                const next = { ...conn };
+                if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
+                else if (key === "basePath") next.basePath = action.payload.value as string;
+                else return;
+                saveSharedConnection(next); // broadcast first
+                setConn(next);
             },
             nodes: {
                 conn: {
@@ -395,21 +390,20 @@ function UpdatesPanelWrapper({
                         gatewayUrl: {
                             label: "Server URL",
                             input: "string",
-                            value: state.gatewayUrl,
+                            value: conn.gatewayUrl,
                         },
                         basePath: {
                             label: "Base path",
                             input: "string",
-                            value: state.basePath,
+                            value: conn.basePath,
                         },
                     },
                 },
             },
         });
-    }, [context, state]);
+    }, [context, conn]);
 
-    const baseUrl = joinBase(state);
-    return <UpdatesPanelView baseUrl={baseUrl} />;
+    return <UpdatesPanelView baseUrl={joinConnection(conn)} />;
 }
 
 export function initUpdatesPanel(context: PanelExtensionContext): () => void {

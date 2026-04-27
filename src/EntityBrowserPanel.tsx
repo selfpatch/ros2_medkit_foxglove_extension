@@ -20,6 +20,12 @@ import {
 import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
+import {
+  type GatewayConnection,
+  loadSharedConnection,
+  onSharedConnectionChange,
+  saveSharedConnection,
+} from "./shared-connection";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -39,15 +45,9 @@ import type { Theme } from "./styles";
 // State
 // ---------------------------------------------------------------------------
 
-interface PanelState {
-  gatewayUrl: string;
-  basePath: string;
-}
-
-const DEFAULT_STATE: PanelState = {
-  gatewayUrl: "http://localhost:8080",
-  basePath: "api/v1",
-};
+// Connection settings live in shared-connection.ts so all three panels in
+// this extension share one Server URL / Base path.
+type PanelState = GatewayConnection;
 
 interface TreeNode {
   entity: SovdEntity;
@@ -71,11 +71,14 @@ function EntityBrowserPanel({
   const [theme, setTheme] = useState<Theme>("dark");
   const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
 
-  // Connection
-  const [state, setState] = useState<PanelState>(() => ({
-    ...DEFAULT_STATE,
-    ...(context.initialState as Partial<PanelState>),
-  }));
+  // Connection (shared across all panels in this extension)
+  const [state, setState] = useState<PanelState>(() =>
+    loadSharedConnection(context.initialState as Partial<PanelState>),
+  );
+
+  // React to changes from other panels (Faults Dashboard, Updates Panel,
+  // or another window/tab).
+  useEffect(() => onSharedConnectionChange(setState), []);
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | undefined>();
@@ -123,12 +126,14 @@ function EntityBrowserPanel({
       actionHandler: (action) => {
         if (action.action !== "update") return;
         const [section, key] = action.payload.path;
-        if (section === "conn") {
-          if (key === "gatewayUrl")
-            setState((p) => ({ ...p, gatewayUrl: action.payload.value as string }));
-          if (key === "basePath")
-            setState((p) => ({ ...p, basePath: action.payload.value as string }));
-        }
+        if (section !== "conn") return;
+        const next = { ...state };
+        if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
+        else if (key === "basePath") next.basePath = action.payload.value as string;
+        else return;
+        // Broadcast first so peer panels pick up the change immediately.
+        saveSharedConnection(next);
+        setState(next);
       },
       nodes: {
         conn: {
