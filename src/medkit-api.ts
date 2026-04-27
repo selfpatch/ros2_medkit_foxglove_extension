@@ -124,10 +124,14 @@ export class MedkitApiClient {
       : ((raw as Record<string, unknown>).items ?? [])) as Array<{
         id: string;
         name?: string;
+        description?: string;
       }>;
     return items.map((c) => ({
       id: c.id,
-      name: c.name || c.id,
+      // Auto-discovered components come back with name == id (a
+      // hostname-derived hash like 'e9e6f682e4bf'). Prefer the human-
+      // readable description when the name is just the id.
+      name: c.name && c.name !== c.id ? c.name : c.description || c.id,
       type: "component",
       href: `/components/${c.id}`,
       hasChildren: true,

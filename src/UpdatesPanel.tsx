@@ -56,22 +56,14 @@ function statusColor(status: string | undefined, theme: Theme): string {
     }
 }
 
-// Mirrors web UI's actionButtonsForStatus.
+// While an operation is mid-flight nothing else makes sense; otherwise
+// every SOVD action is on the table - the gateway will reject e.g. an
+// execute call before prepare with a clean 409, which surfaces in the
+// error banner. Better to let users try than hide buttons they don't
+// realise they have.
 function actionsForStatus(status: string | undefined): string[] {
-    switch (status) {
-        case "pending":
-            return ["prepare", "execute", "automated", "delete"];
-        case "inProgress":
-            return [];
-        case "completed":
-            return ["delete"];
-        case "failed":
-            return ["prepare", "execute", "delete"];
-        default:
-            // Pre-prepare state: gateway returns 404 on /status. Show
-            // automated as the bootstrap action.
-            return ["automated", "delete"];
-    }
+    if (status === "inProgress") return [];
+    return ["prepare", "execute", "automated", "delete"];
 }
 
 const ACTION_LABEL: Record<string, string> = {
@@ -329,7 +321,10 @@ export function UpdatesPanelView({
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                 {sorted.map((entry) => {
-                    const statusLabel = entry.status?.status ?? "no status";
+                    // Gateway returns 404 on /status until the first
+                    // operation runs, so map "no status" to a friendlier
+                    // "Ready" badge (== ready to be prepared/executed).
+                    const statusLabel = entry.status?.status ?? "Ready";
                     const sColor = statusColor(entry.status?.status, theme);
                     const actions = actionsForStatus(entry.status?.status);
                     const isBusy = busyIds.has(entry.id);
