@@ -30,6 +30,7 @@ import {
 } from "./updates-api";
 import { type GatewayConnection, joinConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { notifyEntityGraphChanged } from "./cross-panel-events";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -192,6 +193,13 @@ export function UpdatesPanelView({
                 else if (action === "automated") await triggerAutomated(baseUrl, id, undefined, fImpl);
                 else if (action === "delete") await deleteUpdate(baseUrl, id, fImpl);
                 await refresh();
+                // execute/automated swap or spawn processes server-side -
+                // tell EntityBrowser to refresh its tree so the user sees
+                // broken_lidar disappear and fixed_lidar appear without
+                // having to manually reconnect.
+                if (action === "execute" || action === "automated") {
+                    notifyEntityGraphChanged();
+                }
             } catch (e) {
                 setError(e instanceof Error ? e.message : String(e));
             } finally {

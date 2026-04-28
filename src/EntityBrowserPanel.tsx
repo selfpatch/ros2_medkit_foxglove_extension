@@ -18,6 +18,7 @@ import { createRoot } from "react-dom/client";
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { onEntityGraphChanged } from "./cross-panel-events";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -163,6 +164,27 @@ function EntityBrowserPanel({
   // Auto-connect
   useEffect(() => {
     void doConnect();
+  }, [doConnect]);
+
+  // Refresh tree when another panel signals the entity graph changed
+  // (currently raised by UpdatesPanel after execute / automated). The
+  // gateway's runtime discovery picks up forked processes via ROS 2 graph
+  // events, which can lag the OTA action by 1-3s - so we refresh now AND
+  // again after a delay to catch the post-fork state.
+  useEffect(() => {
+    let pending: number | null = null;
+    const unsubscribe = onEntityGraphChanged(() => {
+      void doConnect();
+      if (pending != null) window.clearTimeout(pending);
+      pending = window.setTimeout(() => {
+        pending = null;
+        void doConnect();
+      }, 2500);
+    });
+    return () => {
+      unsubscribe();
+      if (pending != null) window.clearTimeout(pending);
+    };
   }, [doConnect]);
 
   // ── Tree expand ─────────────────────────────────────────────────
