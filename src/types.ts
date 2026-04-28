@@ -120,6 +120,8 @@ export interface LogEntry {
 export interface ListLogsParams {
   severity?: LogSeverity;
   limit?: number;
+  /** SOVD `?context=` filter: substring match on logger / node name. */
+  context?: string;
 }
 
 export interface CreateExecutionRequest {

@@ -43,18 +43,30 @@ function normalizeBasePath(path: string): string {
   return p;
 }
 
+/**
+ * Error thrown by MedkitApiClient on a non-2xx HTTP response. Carries
+ * the status code so callers can branch (e.g. 404 = "no /logs endpoint
+ * for this entity" vs 503 = "feature unavailable" vs other failures).
+ */
+export class MedkitApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "MedkitApiError";
+  }
+}
+
 async function fetchJSON<T>(url: string, init?: RequestInit, timeout = 10_000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
     clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new MedkitApiError(`HTTP ${res.status}`, res.status);
     return (await res.json()) as T;
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof Error && err.name === "AbortError")
-      throw new Error("Request timeout");
+      throw new MedkitApiError("Request timeout", 0);
     throw err;
   }
 }
@@ -346,6 +358,36 @@ export class MedkitApiClient {
     );
   }
 
+  // Poll an action / async-service execution to terminal state. Returns
+  // the latest snapshot (CreateExecutionResponse shape - the gateway
+  // reuses it for GET responses on the same path).
+  async getExecution(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    operationName: string,
+    executionId: string,
+  ): Promise<CreateExecutionResponse> {
+    return fetchJSON<CreateExecutionResponse>(
+      this.url(
+        `${entityType}/${entityId}/operations/${encodeURIComponent(operationName)}/executions/${encodeURIComponent(executionId)}`
+      )
+    );
+  }
+
+  async cancelExecution(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    operationName: string,
+    executionId: string,
+  ): Promise<void> {
+    await fetchJSON(
+      this.url(
+        `${entityType}/${entityId}/operations/${encodeURIComponent(operationName)}/executions/${encodeURIComponent(executionId)}`
+      ),
+      { method: "DELETE" }
+    );
+  }
+
   // ── Logs ──────────────────────────────────────────────────────────
 
   async listLogs(
@@ -356,6 +398,7 @@ export class MedkitApiClient {
     const qs = new URLSearchParams();
     if (params.severity) qs.set("severity", params.severity);
     if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.context) qs.set("context", params.context);
     const path = `${entityType}/${entityId}/logs${qs.toString() ? `?${qs}` : ""}`;
     return unwrapItems<import("./types").LogEntry>(
       await fetchJSON<unknown>(this.url(path))

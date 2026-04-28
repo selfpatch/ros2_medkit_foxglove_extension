@@ -16,7 +16,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 
-import { MedkitApiClient } from "./medkit-api";
+import { MedkitApiClient, MedkitApiError } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import { onEntityGraphChanged } from "./cross-panel-events";
@@ -96,6 +96,9 @@ function EntityBrowserPanel({
   const [faults, setFaults] = useState<Fault[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logSeverity, setLogSeverity] = useState<LogSeverity>("info");
+  const [logContext, setLogContext] = useState<string>("");
+  const [logRefreshSec, setLogRefreshSec] = useState<number>(0);  // 0 = off
+  const [logsUnsupported, setLogsUnsupported] = useState(false);
   const [apps, setApps] = useState<App[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
   const [tabError, setTabError] = useState<string | undefined>();
@@ -312,27 +315,58 @@ function EntityBrowserPanel({
     [client],
   );
 
-  // ── Lazy-load logs (kept off the main entity-load Promise.all so
-  //    the initial selection stays fast - logs can be hundreds of KB).
+  // Reset log filters when the selected entity changes - inheriting the
+  // previous entity's severity floor silently hides entries below it,
+  // matching what web UI's LogsPanel does on entity change.
+  useEffect(() => {
+    setLogSeverity("info");
+    setLogContext("");
+    setLogsUnsupported(false);
+  }, [selected?.id, selectedType]);
+
+  // ── Lazy-load + auto-refresh logs (kept off the main entity-load
+  //    Promise.all so the initial selection stays fast - logs can be
+  //    hundreds of KB).
 
   useEffect(() => {
     if (!client || !selected || activeTab !== "logs") return;
     let cancelled = false;
-    void (async () => {
+    let intervalId: number | null = null;
+
+    const fetchOnce = async () => {
       try {
         const items = await client.listLogs(selectedType, selected.id, {
           severity: logSeverity,
           limit: 200,
+          context: logContext || undefined,
         });
-        if (!cancelled) setLogs(items);
+        if (cancelled) return;
+        setLogs(items);
+        setLogsUnsupported(false);
+        setTabError(undefined);
       } catch (err) {
-        if (!cancelled) {
-          setTabError(err instanceof Error ? err.message : "Logs load failed");
+        if (cancelled) return;
+        // 404 = this entity does not expose /logs. Don't render the
+        // generic "Logs load failed" - render an explanatory placeholder.
+        if (err instanceof MedkitApiError && (err.status === 404 || err.status === 503)) {
+          setLogsUnsupported(true);
+          setLogs([]);
+          setTabError(undefined);
+          return;
         }
+        setTabError(err instanceof Error ? err.message : "Logs load failed");
       }
-    })();
-    return () => { cancelled = true; };
-  }, [client, selected, selectedType, activeTab, logSeverity]);
+    };
+
+    void fetchOnce();
+    if (logRefreshSec > 0) {
+      intervalId = window.setInterval(() => void fetchOnce(), logRefreshSec * 1000);
+    }
+    return () => {
+      cancelled = true;
+      if (intervalId != null) window.clearInterval(intervalId);
+    };
+  }, [client, selected, selectedType, activeTab, logSeverity, logContext, logRefreshSec]);
 
   // ── Render ──────────────────────────────────────────────────────
 
@@ -469,6 +503,12 @@ function EntityBrowserPanel({
                 logs={logs}
                 severity={logSeverity}
                 onSeverityChange={setLogSeverity}
+                contextFilter={logContext}
+                onContextChange={setLogContext}
+                refreshSec={logRefreshSec}
+                onRefreshSecChange={setLogRefreshSec}
+                unsupported={logsUnsupported}
+                entityType={selectedType}
                 theme={theme}
               />
             )}
@@ -694,21 +734,110 @@ function OperationCard({
     setFormData(inputSchema ? getSchemaDefaults(inputSchema) : {});
   }, [opKey, inputSchema]);
 
+  // Track the in-flight execution so we can poll for terminal state and
+  // expose a cancel button. SOVD `executions` lifecycle: created/POST
+  // returns an `id` immediately with status="pending" or "running"; we
+  // then GET the same path until status moves to a terminal state
+  // (completed / succeeded / failed / aborted / cancelled / error).
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const pollTimer = useRef<number | null>(null);
+
+  const TERMINAL_STATUSES = useMemo(
+    () => new Set(["completed", "succeeded", "failed", "aborted", "cancelled", "canceled", "error"]),
+    [],
+  );
+
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current != null) {
+      window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    }
+  }, []);
+
+  // Stop the timer when the card unmounts (entity switch tears the
+  // OperationCards down). Without this, an action poll keeps firing
+  // against a non-mounted node.
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const pollUntilTerminal = useCallback(
+    async (execId: string) => {
+      if (!client) return;
+      try {
+        const snap = await client.getExecution(entityType, entityId, op.name, execId);
+        setResult(snap);
+        const status = String(snap?.status ?? "").toLowerCase();
+        if (TERMINAL_STATUSES.has(status)) {
+          setRunning(false);
+          setExecutionId(null);
+          return;
+        }
+        pollTimer.current = window.setTimeout(() => void pollUntilTerminal(execId), 1000);
+      } catch (err) {
+        setResult({ error: err instanceof Error ? err.message : "Poll failed" });
+        setRunning(false);
+        setExecutionId(null);
+      }
+    },
+    [client, entityType, entityId, op.name, TERMINAL_STATUSES],
+  );
+
   const invoke = useCallback(async () => {
     if (!client) return;
+    stopPolling();
     setRunning(true);
+    setResult(null);
     try {
       const req: import("./types").CreateExecutionRequest = op.kind === "action"
         ? { type: op.type, goal: hasInputs ? formData : {} }
         : { type: op.type, request: hasInputs ? formData : {} };
       const res = await client.createExecution(entityType, entityId, op.name, req);
       setResult(res);
+      // Services usually complete synchronously - the gateway returns a
+      // terminal status on the POST. Actions return an in-flight id;
+      // start polling.
+      const status = String(res?.status ?? "").toLowerCase();
+      if (res?.id && !TERMINAL_STATUSES.has(status)) {
+        setExecutionId(res.id);
+        pollTimer.current = window.setTimeout(() => void pollUntilTerminal(res.id!), 1000);
+      } else {
+        setRunning(false);
+      }
     } catch (err) {
       setResult({ error: err instanceof Error ? err.message : "Failed" });
-    } finally {
       setRunning(false);
     }
-  }, [client, entityId, entityType, op, formData, hasInputs]);
+  }, [client, entityId, entityType, op, formData, hasInputs, pollUntilTerminal, stopPolling, TERMINAL_STATUSES]);
+
+  const cancel = useCallback(async () => {
+    if (!client || !executionId) return;
+    stopPolling();
+    try {
+      await client.cancelExecution(entityType, entityId, op.name, executionId);
+    } catch (err) {
+      setResult((prev: unknown) => ({
+        ...((prev as Record<string, unknown>) ?? {}),
+        cancel_error: err instanceof Error ? err.message : "Cancel failed",
+      }));
+    } finally {
+      setRunning(false);
+      setExecutionId(null);
+    }
+  }, [client, entityType, entityId, op.name, executionId, stopPolling]);
+
+  const currentStatus = useMemo(() => {
+    if (result == null) return null;
+    const r = result as { status?: unknown };
+    return typeof r.status === "string" ? r.status : null;
+  }, [result]);
+
+  const statusColor = useMemo(() => {
+    if (!currentStatus) return c.textMuted;
+    const s = currentStatus.toLowerCase();
+    if (s === "completed" || s === "succeeded") return c.success;
+    if (s === "failed" || s === "error" || s === "aborted") return c.critical;
+    if (s === "cancelled" || s === "canceled") return c.warning;
+    return c.info;
+  }, [currentStatus, c]);
 
   return (
     <div style={S.card(theme)}>
@@ -733,9 +862,31 @@ function OperationCard({
           disabled={running}
           onClick={() => void invoke()}
         >
-          {running ? "⏳" : "▶"} Invoke
+          {running ? "⏳" : "▶"} {op.kind === "action" ? "Send goal" : "Call"}
         </button>
+        {running && executionId && (
+          <button
+            style={S.btn(theme, "danger")}
+            onClick={() => void cancel()}
+            title={`Cancel execution ${executionId}`}
+          >
+            ✕ Cancel
+          </button>
+        )}
       </div>
+      {currentStatus && (
+        <div style={{ marginTop: 6, display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}>
+          <span style={{ color: c.textMuted }}>status:</span>
+          <span style={{ ...S.badge("#fff", statusColor), fontSize: 10 }}>
+            {currentStatus}
+          </span>
+          {executionId && (
+            <span style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 10 }}>
+              {executionId}
+            </span>
+          )}
+        </div>
+      )}
       {hasInputs && expanded && inputSchema && (
         <div style={{
           marginTop: 8,
@@ -783,15 +934,35 @@ const LOG_SEVERITY_COLOR: Record<LogSeverity, "info" | "success" | "warning" | "
   fatal: "critical",
 };
 
+const LOG_REFRESH_OPTIONS = [
+  { label: "off", value: 0 },
+  { label: "2s", value: 2 },
+  { label: "5s", value: 5 },
+  { label: "10s", value: 10 },
+  { label: "30s", value: 30 },
+];
+
 function LogsTab({
   logs,
   severity,
   onSeverityChange,
+  contextFilter,
+  onContextChange,
+  refreshSec,
+  onRefreshSecChange,
+  unsupported,
+  entityType,
   theme,
 }: {
   logs: LogEntry[];
   severity: LogSeverity;
   onSeverityChange: (s: LogSeverity) => void;
+  contextFilter: string;
+  onContextChange: (v: string) => void;
+  refreshSec: number;
+  onRefreshSecChange: (v: number) => void;
+  unsupported: boolean;
+  entityType: SovdResourceEntityType;
   theme: Theme;
 }): ReactElement {
   const c = S.colors(theme);
@@ -800,13 +971,22 @@ function LogsTab({
   const filtered = trimmed
     ? logs.filter((l) => l.message.toLowerCase().includes(trimmed))
     : logs;
+  // Web UI skips context filter for `apps` (a single node has no children
+  // to disambiguate); mirror that here.
+  const showContextFilter = entityType !== "apps";
+
+  if (unsupported) {
+    return (
+      <div style={S.emptyState(theme)}>
+        This entity does not expose a /logs endpoint.
+      </div>
+    );
+  }
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-        <label style={{ fontSize: 11, alignSelf: "center", color: c.textMuted }}>
-          Severity ≥
-        </label>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ fontSize: 11, color: c.textMuted }}>Severity ≥</label>
         <select
           value={severity}
           onChange={(e) => onSeverityChange(e.target.value as LogSeverity)}
@@ -816,12 +996,31 @@ function LogsTab({
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
+        <label style={{ fontSize: 11, color: c.textMuted, marginLeft: 6 }}>Auto-refresh</label>
+        <select
+          value={refreshSec}
+          onChange={(e) => onRefreshSecChange(Number(e.target.value))}
+          style={{ ...S.input(theme), fontSize: 11, padding: "2px 6px" }}
+        >
+          {LOG_REFRESH_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        {showContextFilter && (
+          <input
+            type="text"
+            value={contextFilter}
+            onChange={(e) => onContextChange(e.target.value)}
+            placeholder="Filter context (node)…"
+            style={{ ...S.input(theme), fontSize: 11, width: 160 }}
+          />
+        )}
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter messages…"
-          style={{ ...S.input(theme), flex: 1, fontSize: 11 }}
+          style={{ ...S.input(theme), flex: 1, minWidth: 140, fontSize: 11 }}
         />
       </div>
       {filtered.length === 0 ? (
