@@ -70,11 +70,56 @@ export interface ComponentConfigurations {
 
 export type OperationKind = "service" | "action";
 
+// JSON Schema fragment as the gateway returns it inside x-medkit.type_info.
+// We treat it as the raw API shape and convert lazily on the consumer side.
+export interface JsonSchema {
+  type?: string;
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+}
+
+export interface OperationTypeInfo {
+  // Service operations expose request + response schemas; actions expose
+  // goal + result + feedback. Either or both branches may be present.
+  request?: JsonSchema;
+  response?: JsonSchema;
+  goal?: JsonSchema;
+  result?: JsonSchema;
+  feedback?: JsonSchema;
+}
+
 export interface Operation {
   name: string;
   path: string;
   type: string;
   kind: OperationKind;
+  // Request/goal schema parsed from /operations response. Optional because
+  // the gateway may not have type-info for plugin-provided operations.
+  typeInfo?: OperationTypeInfo;
+}
+
+// =============================================================================
+// Logs (SOVD ISO 17978-3 logs endpoints, e.g. /apps/{id}/logs)
+// =============================================================================
+
+export type LogSeverity = "debug" | "info" | "warning" | "error" | "fatal";
+
+export interface LogEntry {
+  id: string;
+  message: string;
+  severity: LogSeverity;
+  timestamp: string;
+  context?: {
+    file?: string;
+    function?: string;
+    line?: number;
+    node?: string;
+  };
+}
+
+export interface ListLogsParams {
+  severity?: LogSeverity;
+  limit?: number;
 }
 
 export interface CreateExecutionRequest {

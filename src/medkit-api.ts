@@ -306,6 +306,7 @@ export class MedkitApiClient {
       asynchronous_execution?: boolean;
       "x-medkit"?: {
         ros2?: { kind?: "service" | "action"; service?: string; action?: string; type?: string };
+        type_info?: import("./types").OperationTypeInfo;
       };
     }
     const items = unwrapItems<RawOp>(
@@ -321,6 +322,7 @@ export class MedkitApiClient {
         path: r?.service || r?.action || `/${op.name}`,
         type: r?.type || "",
         kind,
+        typeInfo: op["x-medkit"]?.type_info,
       };
     });
   }
@@ -341,6 +343,22 @@ export class MedkitApiClient {
         body: JSON.stringify(request),
       },
       30_000
+    );
+  }
+
+  // ── Logs ──────────────────────────────────────────────────────────
+
+  async listLogs(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    params: import("./types").ListLogsParams = {},
+  ): Promise<import("./types").LogEntry[]> {
+    const qs = new URLSearchParams();
+    if (params.severity) qs.set("severity", params.severity);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    const path = `${entityType}/${entityId}/logs${qs.toString() ? `?${qs}` : ""}`;
+    return unwrapItems<import("./types").LogEntry>(
+      await fetchJSON<unknown>(this.url(path))
     );
   }
 

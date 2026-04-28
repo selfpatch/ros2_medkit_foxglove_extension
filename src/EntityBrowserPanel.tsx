@@ -9,6 +9,7 @@ import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
+  useMemo,
   useState,
   useCallback,
 } from "react";
@@ -27,8 +28,15 @@ import type {
   SovdResourceEntityType,
   FaultResponse,
   Snapshot,
+  LogEntry,
+  LogSeverity,
 } from "./types";
 import { isRosbagSnapshot } from "./types";
+import { SchemaForm } from "./SchemaForm";
+import {
+  convertJsonSchemaToTopicSchema,
+  getSchemaDefaults,
+} from "./schema-utils";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -47,7 +55,7 @@ interface TreeNode {
   isLoading: boolean;
 }
 
-type Tab = "data" | "operations" | "configurations" | "faults";
+type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
 
 // ---------------------------------------------------------------------------
 // Panel Component
@@ -84,6 +92,8 @@ function EntityBrowserPanel({
   const [operations, setOperations] = useState<Operation[]>([]);
   const [configs, setConfigs] = useState<Parameter[]>([]);
   const [faults, setFaults] = useState<Fault[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logSeverity, setLogSeverity] = useState<LogSeverity>("info");
   const [apps, setApps] = useState<App[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
   const [tabError, setTabError] = useState<string | undefined>();
@@ -239,6 +249,7 @@ function EntityBrowserPanel({
       setOperations([]);
       setConfigs([]);
       setFaults([]);
+      setLogs([]);
       setApps([]);
 
       try {
@@ -265,6 +276,28 @@ function EntityBrowserPanel({
     },
     [client],
   );
+
+  // ── Lazy-load logs (kept off the main entity-load Promise.all so
+  //    the initial selection stays fast - logs can be hundreds of KB).
+
+  useEffect(() => {
+    if (!client || !selected || activeTab !== "logs") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const items = await client.listLogs(selectedType, selected.id, {
+          severity: logSeverity,
+          limit: 200,
+        });
+        if (!cancelled) setLogs(items);
+      } catch (err) {
+        if (!cancelled) {
+          setTabError(err instanceof Error ? err.message : "Logs load failed");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, selected, selectedType, activeTab, logSeverity]);
 
   // ── Render ──────────────────────────────────────────────────────
 
@@ -342,7 +375,7 @@ function EntityBrowserPanel({
 
             {/* Tabs */}
             <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
-              {(["data", "operations", "configurations", "faults"] as Tab[]).map((t) => (
+              {(["data", "operations", "configurations", "faults", "logs"] as Tab[]).map((t) => (
                 <button
                   key={t}
                   style={{
@@ -394,6 +427,14 @@ function EntityBrowserPanel({
                 client={client}
                 theme={theme}
                 onRefresh={() => void selectEntity(selected)}
+              />
+            )}
+            {!tabLoading && activeTab === "logs" && (
+              <LogsTab
+                logs={logs}
+                severity={logSeverity}
+                onSeverityChange={setLogSeverity}
+                theme={theme}
               />
             )}
 
@@ -549,71 +590,235 @@ function OperationsTab({
   client: MedkitApiClient | null;
   theme: Theme;
 }): ReactElement {
-  const c = S.colors(theme);
-  const [running, setRunning] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, unknown>>({});
-
-  const invokeOp = useCallback(
-    async (op: Operation) => {
-      if (!client) return;
-      setRunning(op.name);
-      try {
-        const req = op.kind === "action"
-          ? { type: op.type, goal: {} }
-          : { type: op.type, request: {} };
-        const res = await client.createExecution(entityType, entityId, op.name, req);
-        setResults((prev) => ({ ...prev, [op.name]: res }));
-      } catch (err) {
-        setResults((prev) => ({
-          ...prev,
-          [op.name]: { error: err instanceof Error ? err.message : "Failed" },
-        }));
-      } finally {
-        setRunning(null);
-      }
-    },
-    [client, entityId, entityType],
-  );
-
   if (operations.length === 0) return <div style={S.emptyState(theme)}>No operations</div>;
-
   return (
     <div>
       {operations.map((op) => (
-        <div key={op.name} style={S.card(theme)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <strong style={{ fontSize: 12 }}>{op.name}</strong>
-            <span style={S.badge(
-              "#fff",
-              op.kind === "action" ? c.warning : c.accent,
-            )}>
-              {op.kind}
-            </span>
-            <span style={{ color: c.textMuted, fontSize: 11, flex: 1 }}>{op.type}</span>
-            <button
-              style={S.btn(theme)}
-              disabled={running === op.name}
-              onClick={() => void invokeOp(op)}
-            >
-              {running === op.name ? "⏳" : "▶"} Invoke
-            </button>
-          </div>
-          {results[op.name] != null && (
-            <pre style={{
-              margin: "6px 0 0",
-              padding: 6,
-              background: c.bgAlt,
-              borderRadius: 4,
-              fontSize: 11,
-              overflow: "auto",
-              maxHeight: 200,
-              whiteSpace: "pre-wrap",
-            }}>
-              {JSON.stringify(results[op.name], null, 2)}
-            </pre>
-          )}
-        </div>
+        <OperationCard
+          key={op.name}
+          op={op}
+          entityId={entityId}
+          entityType={entityType}
+          client={client}
+          theme={theme}
+        />
       ))}
+    </div>
+  );
+}
+
+// One card per operation: header row with kind/type badges + invoke button,
+// expandable schema form for typed args, JSON result panel below. Each op
+// owns its own form state so opening navigate_to_pose doesn't reset
+// change_state's form, etc.
+function OperationCard({
+  op,
+  entityId,
+  entityType,
+  client,
+  theme,
+}: {
+  op: Operation;
+  entityId: string;
+  entityType: SovdResourceEntityType;
+  client: MedkitApiClient | null;
+  theme: Theme;
+}): ReactElement {
+  const c = S.colors(theme);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<unknown>(null);
+
+  // Pull request/goal schema once per op. Memoize so the form doesn't
+  // re-init defaults on every render.
+  const inputSchema = useMemo(() => {
+    if (!op.typeInfo) return null;
+    const raw = op.kind === "action" ? op.typeInfo.goal : op.typeInfo.request;
+    return convertJsonSchemaToTopicSchema(raw) ?? null;
+  }, [op]);
+
+  const hasInputs = inputSchema != null && Object.keys(inputSchema).length > 0;
+  const [expanded, setExpanded] = useState(false);
+  const [formData, setFormData] = useState<Record<string, unknown>>(() =>
+    inputSchema ? getSchemaDefaults(inputSchema) : {},
+  );
+
+  // Reset defaults if the schema reference changes (entity selection
+  // recreates the Operation array, but the form should not lose user
+  // edits made for the same op identity).
+  useEffect(() => {
+    if (inputSchema) setFormData(getSchemaDefaults(inputSchema));
+    else setFormData({});
+  }, [inputSchema]);
+
+  const invoke = useCallback(async () => {
+    if (!client) return;
+    setRunning(true);
+    try {
+      const req: import("./types").CreateExecutionRequest = op.kind === "action"
+        ? { type: op.type, goal: hasInputs ? formData : {} }
+        : { type: op.type, request: hasInputs ? formData : {} };
+      const res = await client.createExecution(entityType, entityId, op.name, req);
+      setResult(res);
+    } catch (err) {
+      setResult({ error: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setRunning(false);
+    }
+  }, [client, entityId, entityType, op, formData, hasInputs]);
+
+  return (
+    <div style={S.card(theme)}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 12 }}>{op.name}</strong>
+        <span style={S.badge("#fff", op.kind === "action" ? c.warning : c.accent)}>
+          {op.kind}
+        </span>
+        <span style={{ color: c.textMuted, fontSize: 11, flex: 1, minWidth: 100 }}>
+          {op.type || "—"}
+        </span>
+        {hasInputs && (
+          <button
+            style={{ ...S.btn(theme, "ghost"), fontSize: 11 }}
+            onClick={() => setExpanded((p) => !p)}
+          >
+            {expanded ? "Hide args" : "Edit args"}
+          </button>
+        )}
+        <button
+          style={S.btn(theme)}
+          disabled={running}
+          onClick={() => void invoke()}
+        >
+          {running ? "⏳" : "▶"} Invoke
+        </button>
+      </div>
+      {hasInputs && expanded && inputSchema && (
+        <div style={{
+          marginTop: 8,
+          padding: 8,
+          background: c.bgAlt,
+          borderRadius: 4,
+        }}>
+          <SchemaForm
+            schema={inputSchema}
+            value={formData}
+            onChange={setFormData}
+            theme={theme}
+          />
+        </div>
+      )}
+      {result != null && (
+        <pre style={{
+          margin: "6px 0 0",
+          padding: 6,
+          background: c.bgAlt,
+          borderRadius: 4,
+          fontSize: 11,
+          overflow: "auto",
+          maxHeight: 200,
+          whiteSpace: "pre-wrap",
+        }}>
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Logs
+// ---------------------------------------------------------------------------
+
+const LOG_SEVERITIES: LogSeverity[] = ["debug", "info", "warning", "error", "fatal"];
+
+const LOG_SEVERITY_COLOR: Record<LogSeverity, "info" | "success" | "warning" | "critical"> = {
+  debug: "info",
+  info: "success",
+  warning: "warning",
+  error: "critical",
+  fatal: "critical",
+};
+
+function LogsTab({
+  logs,
+  severity,
+  onSeverityChange,
+  theme,
+}: {
+  logs: LogEntry[];
+  severity: LogSeverity;
+  onSeverityChange: (s: LogSeverity) => void;
+  theme: Theme;
+}): ReactElement {
+  const c = S.colors(theme);
+  const [search, setSearch] = useState("");
+  const trimmed = search.trim().toLowerCase();
+  const filtered = trimmed
+    ? logs.filter((l) => l.message.toLowerCase().includes(trimmed))
+    : logs;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <label style={{ fontSize: 11, alignSelf: "center", color: c.textMuted }}>
+          Severity ≥
+        </label>
+        <select
+          value={severity}
+          onChange={(e) => onSeverityChange(e.target.value as LogSeverity)}
+          style={{ ...S.input(theme), fontSize: 11, padding: "2px 6px" }}
+        >
+          {LOG_SEVERITIES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter messages…"
+          style={{ ...S.input(theme), flex: 1, fontSize: 11 }}
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <div style={S.emptyState(theme)}>No log entries</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {filtered.map((log) => {
+            const colorKey = LOG_SEVERITY_COLOR[log.severity] ?? "info";
+            const bg =
+              colorKey === "critical" ? c.critical :
+              colorKey === "warning" ? c.warning :
+              colorKey === "success" ? c.success :
+              c.info;
+            return (
+              <div key={log.id} style={{
+                ...S.card(theme),
+                padding: "4px 6px",
+                margin: 0,
+                fontSize: 11,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ ...S.badge("#fff", bg), fontSize: 9, minWidth: 50, textAlign: "center" }}>
+                    {log.severity}
+                  </span>
+                  <span style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace" }}>
+                    {log.timestamp.replace("T", " ").replace("Z", "")}
+                  </span>
+                  {log.context?.node && (
+                    <span style={{ color: c.textMuted, fontSize: 10 }}>
+                      {log.context.node}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontFamily: "monospace", marginTop: 2 }}>
+                  {log.message}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

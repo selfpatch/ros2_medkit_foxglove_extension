@@ -9,6 +9,7 @@ import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
+  useMemo,
   useState,
   useCallback,
   useRef,
@@ -63,7 +64,12 @@ function FaultsDashboardPanel({
     ...((context.initialState ?? {}) as Partial<PanelKnobs>),
   }));
 
-  const state: PanelState = { ...conn, ...knobs };
+  // Memoize the merged state so its identity only changes when conn or
+  // knobs actually change. Without this the object literal recreates on
+  // every render, the settings-editor effect re-runs every render, and
+  // Foxglove resets the input mid-typing - the user sees their edits
+  // discarded (Server URL, Base path, etc.).
+  const state: PanelState = useMemo(() => ({ ...conn, ...knobs }), [conn, knobs]);
 
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
