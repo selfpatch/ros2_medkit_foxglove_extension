@@ -8,7 +8,7 @@
 // per panel * 3 panels), drifting subtly each time we touched it.
 
 import type { Immutable, PanelExtensionContext, RenderState } from "@foxglove/extension";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 import {
     type GatewayConnection,
@@ -35,13 +35,15 @@ export interface SharedConnectionApi {
 export function useSharedConnection(overrides?: Partial<GatewayConnection>): SharedConnectionApi {
     const [conn, setConn] = useState<GatewayConnection>(() => loadSharedConnection(overrides));
     useEffect(() => onSharedConnectionChange(setConn), []);
-    return {
-        conn,
-        update: (next) => {
-            saveSharedConnection(next);
-            setConn(next);
-        },
-    };
+    // Stable update reference - effects in consuming panels list `update`
+    // in their deps and would otherwise re-run on every render, which
+    // re-registers the Foxglove panel settings editor and resets the
+    // input field mid-typing.
+    const update = useCallback((next: GatewayConnection) => {
+        saveSharedConnection(next);
+        setConn(next);
+    }, []);
+    return { conn, update };
 }
 
 /**

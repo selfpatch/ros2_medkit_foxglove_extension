@@ -10,6 +10,7 @@ import {
   type ReactElement,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useCallback,
 } from "react";
@@ -131,11 +132,20 @@ function EntityBrowserPanel({
 
   // ── Connect ─────────────────────────────────────────────────────
 
+  // Cancellation token: only the most-recent doConnect run is allowed
+  // to commit state. The entity-graph-changed signal fires doConnect
+  // twice (immediate + 2.5s retry), and the user can change the gateway
+  // URL while a connect is in flight - without this guard, a stale run
+  // can land setClient/setTree after a fresher run already finished,
+  // tearing the panel state.
+  const connectId = useRef(0);
   const doConnect = useCallback(async () => {
+    const myId = ++connectId.current;
     const c = new MedkitApiClient(state.gatewayUrl, state.basePath);
     setConnError(undefined);
     try {
       const ok = await c.ping();
+      if (myId !== connectId.current) return;
       if (!ok) {
         setConnError("Server not reachable");
         return;
@@ -148,15 +158,18 @@ function EntityBrowserPanel({
         c.listAreas(),
         c.listFunctions().catch(() => [] as SovdEntity[]),
       ]);
+      if (myId !== connectId.current) return;
       // Gateways running in runtime_only mode without a manifest report
       // zero areas but still expose synthetic components. Fall back to
       // /components so the tree is not empty just because no manifest is
       // configured.
       const roots: SovdEntity[] =
         areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+      if (myId !== connectId.current) return;
       setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
       setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
+      if (myId !== connectId.current) return;
       setConnError(err instanceof Error ? err.message : "Connection failed");
     }
   }, [state.gatewayUrl, state.basePath]);
@@ -652,11 +665,18 @@ function OperationCard({
 
   // Pull request/goal schema once per op. Memoize so the form doesn't
   // re-init defaults on every render.
+  // Memoize on the structural identity of the operation, not on the
+  // `op` object reference - listOperations() returns a fresh array on
+  // every entity (re-)select, so depending on `op` would re-build the
+  // schema and (via the reset effect below) wipe in-progress user edits
+  // every time the parent re-fetches.
+  const opKey = `${op.name}|${op.kind}|${op.type}`;
   const inputSchema = useMemo(() => {
     if (!op.typeInfo) return null;
     const raw = op.kind === "action" ? op.typeInfo.goal : op.typeInfo.request;
     return convertJsonSchemaToTopicSchema(raw) ?? null;
-  }, [op]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opKey]);
 
   const hasInputs = inputSchema != null && Object.keys(inputSchema).length > 0;
   const [expanded, setExpanded] = useState(false);
@@ -664,13 +684,15 @@ function OperationCard({
     inputSchema ? getSchemaDefaults(inputSchema) : {},
   );
 
-  // Reset defaults if the schema reference changes (entity selection
-  // recreates the Operation array, but the form should not lose user
-  // edits made for the same op identity).
+  // Reset to schema defaults only when the operation's structural
+  // identity changes (a new op was selected). Re-fetches that hand us a
+  // structurally-identical op must NOT clobber form edits.
+  const lastOpKey = useRef(opKey);
   useEffect(() => {
-    if (inputSchema) setFormData(getSchemaDefaults(inputSchema));
-    else setFormData({});
-  }, [inputSchema]);
+    if (lastOpKey.current === opKey) return;
+    lastOpKey.current = opKey;
+    setFormData(inputSchema ? getSchemaDefaults(inputSchema) : {});
+  }, [opKey, inputSchema]);
 
   const invoke = useCallback(async () => {
     if (!client) return;
