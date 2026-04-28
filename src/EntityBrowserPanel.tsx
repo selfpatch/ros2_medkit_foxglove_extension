@@ -335,11 +335,36 @@ function EntityBrowserPanel({
 
     const fetchOnce = async () => {
       try {
-        const items = await client.listLogs(selectedType, selected.id, {
+        const params = {
           severity: logSeverity,
           limit: 200,
           context: logContext || undefined,
-        });
+        };
+        let items = await client.listLogs(selectedType, selected.id, params);
+
+        // Synthetic components (runtime-discovered, fqn-less) get an
+        // empty array from the gateway prefix-match path, so component
+        // log views look broken even when their child apps have plenty
+        // to show. Fall back to client-side aggregation: fetch each
+        // child app in parallel and merge by timestamp desc. Skipped
+        // when the gateway already returned items (manifest-defined
+        // components with a real fqn).
+        if (
+          selectedType === "components"
+          && items.length === 0
+          && apps.length > 0
+        ) {
+          const perApp = await Promise.all(
+            apps.map((a) =>
+              client.listLogs("apps", a.id, params).catch(() => [] as LogEntry[]),
+            ),
+          );
+          items = perApp
+            .flat()
+            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+            .slice(0, 200);
+        }
+
         if (cancelled) return;
         setLogs(items);
         setLogsUnsupported(false);
@@ -366,7 +391,7 @@ function EntityBrowserPanel({
       cancelled = true;
       if (intervalId != null) window.clearInterval(intervalId);
     };
-  }, [client, selected, selectedType, activeTab, logSeverity, logContext, logRefreshSec]);
+  }, [client, selected, selectedType, activeTab, logSeverity, logContext, logRefreshSec, apps]);
 
   // ── Render ──────────────────────────────────────────────────────
 
@@ -513,24 +538,11 @@ function EntityBrowserPanel({
               />
             )}
 
-            {/* Apps under component */}
-            {apps.length > 0 && (
-              <>
-                <h4 style={S.subheading(theme)}>Apps ({apps.length})</h4>
-                {apps.map((app) => (
-                  <div
-                    key={app.id}
-                    style={{ ...S.card(theme), cursor: "pointer" }}
-                    onClick={() => void selectEntity(app)}
-                  >
-                    <strong>{app.name}</strong>
-                    <span style={{ color: c.textMuted, marginLeft: 8, fontSize: 11 }}>
-                      {app.fqn}
-                    </span>
-                  </div>
-                ))}
-              </>
-            )}
+            {/* Child apps are surfaced via the tree (expand the component
+                node) and via the logs aggregation when present, so we
+                deliberately do NOT render a separate Apps card list here -
+                it duplicated information already on screen and crowded the
+                detail panel on narrower layouts. */}
           </>
         )}
       </div>
