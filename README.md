@@ -6,7 +6,8 @@ Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gate
 
 | Panel | Description |
 |-------|-------------|
-| **ros2_medkit Entity Browser** | Tree view of areas → components → apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
+| **ros2_medkit Entity Browser** | Tree view of areas → components → apps. Select an entity to see its **data**, **operations**, **configurations**, **faults**, and **logs** in tabbed detail view. The operations tab renders a JSON-Schema form derived from `x-medkit.type_info`, polls action executions to terminal state, and exposes a cancel button. The logs tab supports severity floor, context filter, message search, and configurable auto-refresh. |
+| **ros2_medkit Updates** | Browse, register, prepare, execute, and delete SOVD ISO 17978-3 updates. Supports the OTA over SOVD flow (Update / Install / Uninstall). After execute / automated, broadcasts a same-window event so the Entity Browser refreshes its tree without a manual reconnect. |
 | **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
 
 ## Prerequisites
@@ -32,6 +33,7 @@ npm run package
 
 After `local-install`, restart Foxglove Studio and add panels from the panel menu:
 - **ros2_medkit Entity Browser**
+- **ros2_medkit Updates**
 - **ros2_medkit Faults Dashboard**
 
 ## Configuration
@@ -41,18 +43,29 @@ Each panel has a settings editor (gear icon) where you configure:
 - **Server URL** — Gateway address (e.g., `http://localhost:8080`)
 - **Base path** — API path prefix (default: `api/v1`)
 
+All three panels share the **Server URL** / **Base path** via `localStorage` plus a same-window `CustomEvent`, so changing it in one panel propagates to the others without a restart.
+
 The Faults Dashboard has additional settings for refresh rate and SSE streaming.
+
+The Entity Browser refreshes its tree automatically when the Updates panel raises `selfpatch:entity-graph-changed` (after `execute` / `automated`), so OTA process swaps appear without a manual reconnect.
 
 ## Architecture
 
 ```
 src/
-├── index.ts                   # Extension entry — registers both panels
+├── index.ts                   # Extension entry - registers all three panels
 ├── types.ts                   # ros2_medkit gateway type definitions
-├── medkit-api.ts              # HTTP API client for ros2_medkit gateway
+├── medkit-api.ts              # HTTP API client (MedkitApiClient + MedkitApiError)
+├── updates-api.ts             # SOVD updates endpoint client
+├── shared-connection.ts       # localStorage + CustomEvent gateway-URL bus
+├── cross-panel-events.ts      # entity-graph-changed signal (OTA -> tree refresh)
+├── panel-hooks.ts             # useSharedConnection + useColorSchemeTheme
+├── schema-utils.ts            # JSON Schema -> TopicSchema converter
+├── SchemaForm.tsx             # JSON-Schema form renderer for Operations
 ├── styles.ts                  # Inline style helpers (dark/light theme)
-├── EntityBrowserPanel.tsx     # Entity tree + detail tabs
-└── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
+├── EntityBrowserPanel.tsx     # Entity tree + data/ops/config/faults/logs tabs
+├── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
+└── UpdatesPanel.tsx           # SOVD updates lifecycle UI
 ```
 
 ## Compatibility
