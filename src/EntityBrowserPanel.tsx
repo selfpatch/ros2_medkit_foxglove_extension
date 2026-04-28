@@ -26,7 +26,6 @@ import type {
   Parameter,
   Operation,
   Fault,
-  App,
   SovdResourceEntityType,
   FaultResponse,
   Snapshot,
@@ -99,7 +98,6 @@ function EntityBrowserPanel({
   const [logContext, setLogContext] = useState<string>("");
   const [logRefreshSec, setLogRefreshSec] = useState<number>(0);  // 0 = off
   const [logsUnsupported, setLogsUnsupported] = useState(false);
-  const [apps, setApps] = useState<App[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
   const [tabError, setTabError] = useState<string | undefined>();
 
@@ -288,7 +286,6 @@ function EntityBrowserPanel({
       setConfigs([]);
       setFaults([]);
       setLogs([]);
-      setApps([]);
 
       try {
         const [dataRes, opsRes, cfgRes, faultsRes] = await Promise.all([
@@ -301,11 +298,6 @@ function EntityBrowserPanel({
         setOperations(opsRes);
         setConfigs(cfgRes.parameters);
         setFaults(faultsRes.items);
-
-        if (entity.type === "component") {
-          const componentApps = await client.listComponentApps(entity.id).catch(() => []);
-          setApps(componentApps);
-        }
       } catch (err) {
         setTabError(err instanceof Error ? err.message : "Load failed");
       } finally {
@@ -335,36 +327,11 @@ function EntityBrowserPanel({
 
     const fetchOnce = async () => {
       try {
-        const params = {
+        const items = await client.listLogs(selectedType, selected.id, {
           severity: logSeverity,
           limit: 200,
           context: logContext || undefined,
-        };
-        let items = await client.listLogs(selectedType, selected.id, params);
-
-        // Synthetic components (runtime-discovered, fqn-less) get an
-        // empty array from the gateway prefix-match path, so component
-        // log views look broken even when their child apps have plenty
-        // to show. Fall back to client-side aggregation: fetch each
-        // child app in parallel and merge by timestamp desc. Skipped
-        // when the gateway already returned items (manifest-defined
-        // components with a real fqn).
-        if (
-          selectedType === "components"
-          && items.length === 0
-          && apps.length > 0
-        ) {
-          const perApp = await Promise.all(
-            apps.map((a) =>
-              client.listLogs("apps", a.id, params).catch(() => [] as LogEntry[]),
-            ),
-          );
-          items = perApp
-            .flat()
-            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-            .slice(0, 200);
-        }
-
+        });
         if (cancelled) return;
         setLogs(items);
         setLogsUnsupported(false);
@@ -391,7 +358,7 @@ function EntityBrowserPanel({
       cancelled = true;
       if (intervalId != null) window.clearInterval(intervalId);
     };
-  }, [client, selected, selectedType, activeTab, logSeverity, logContext, logRefreshSec, apps]);
+  }, [client, selected, selectedType, activeTab, logSeverity, logContext, logRefreshSec]);
 
   // ── Render ──────────────────────────────────────────────────────
 
