@@ -163,6 +163,20 @@ export class MedkitApiClient {
   }
 
   async listComponentApps(componentId: string): Promise<App[]> {
+    return this.listEntityHosts("components", componentId);
+  }
+
+  async listFunctionApps(functionId: string): Promise<App[]> {
+    return this.listEntityHosts("functions", functionId);
+  }
+
+  // SOVD models both components and functions as having a /hosts
+  // collection that returns the apps living on / contributing to them.
+  // Same response shape, so one helper.
+  private async listEntityHosts(
+    parentType: "components" | "functions",
+    parentId: string,
+  ): Promise<App[]> {
     interface ApiApp {
       id: string;
       name: string;
@@ -170,7 +184,7 @@ export class MedkitApiClient {
       "x-medkit"?: { ros2?: { node?: string }; component_id?: string };
     }
     const items = unwrapItems<ApiApp>(
-      await fetchJSON<unknown>(this.url(`components/${componentId}/hosts`))
+      await fetchJSON<unknown>(this.url(`${parentType}/${parentId}/hosts`))
     );
     return items.map((item) => {
       const nodePath = item["x-medkit"]?.ros2?.node || `/${item.name}`;
@@ -184,7 +198,7 @@ export class MedkitApiClient {
         node_name: lastSlash >= 0 ? nodePath.substring(lastSlash + 1) : item.name,
         namespace: lastSlash > 0 ? nodePath.substring(0, lastSlash) : "/",
         fqn: nodePath,
-        component_id: componentId,
+        component_id: item["x-medkit"]?.component_id ?? (parentType === "components" ? parentId : ""),
       };
     });
   }

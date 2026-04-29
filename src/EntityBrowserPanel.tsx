@@ -81,6 +81,11 @@ function EntityBrowserPanel({
 
   // Tree
   const [tree, setTree] = useState<TreeNode[]>([]);
+  // Tracks whether the root tree is showing Areas or Components - the
+  // gateway returns one of the two (manifests with areas defined go via
+  // /areas; manifest-less or area-less ones fall back to /components),
+  // and the section header in the UI should reflect that.
+  const [treeKind, setTreeKind] = useState<"areas" | "components">("areas");
   const [functions, setFunctions] = useState<TreeNode[]>([]);
 
   // Selection
@@ -160,14 +165,23 @@ function EntityBrowserPanel({
         c.listFunctions().catch(() => [] as SovdEntity[]),
       ]);
       if (myId !== connectId.current) return;
-      // Gateways running in runtime_only mode without a manifest report
-      // zero areas but still expose synthetic components. Fall back to
-      // /components so the tree is not empty just because no manifest is
-      // configured.
-      const roots: SovdEntity[] =
-        areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+      // Gateways running without a manifest (or with one that omits
+      // areas) report zero areas but still expose components. Fall
+      // back to /components so the tree is not empty just because the
+      // manifest didn't declare areas, and remember which collection
+      // we drew from so the section header reads correctly.
+      let roots: SovdEntity[];
+      let kind: "areas" | "components";
+      if (areas.length > 0) {
+        roots = areas;
+        kind = "areas";
+      } else {
+        roots = await c.listComponents().catch(() => [] as SovdEntity[]);
+        kind = "components";
+      }
       if (myId !== connectId.current) return;
       setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
+      setTreeKind(kind);
       setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
       if (myId !== connectId.current) return;
@@ -238,6 +252,17 @@ function EntityBrowserPanel({
           children = comps.map((c) => ({ entity: c, isExpanded: false, isLoading: false }));
         } else if (e.type === "component") {
           const appList = await client.listComponentApps(e.id);
+          children = appList.map((a) => ({
+            entity: a,
+            isExpanded: false,
+            isLoading: false,
+          }));
+        } else if (e.type === "function") {
+          // Functions have a /hosts collection too - the apps that
+          // together deliver the capability. Without this, expanding
+          // a function in the tree did nothing and the operator had no
+          // way to see what "Autonomous Navigation" actually contained.
+          const appList = await client.listFunctionApps(e.id);
           children = appList.map((a) => ({
             entity: a,
             isExpanded: false,
@@ -387,7 +412,9 @@ function EntityBrowserPanel({
         {tree.length === 0 && functions.length === 0 && <div style={S.emptyState(theme)}>No entities found</div>}
         {tree.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>Areas</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>
+              {treeKind === "areas" ? "Areas" : "Components"}
+            </div>
             {tree.map((node, i) => (
               <TreeNodeRow
                 key={node.entity.id}
@@ -540,7 +567,9 @@ function TreeNodeRow({
 }): ReactElement {
   const c = S.colors(theme);
   const isSelected = selected?.id === node.entity.id;
-  const hasChildren = node.entity.type !== "app" && node.entity.type !== "function";
+  // Areas, Components, and Functions all expose hosted children.
+  // Apps are the leaves of the tree.
+  const hasChildren = node.entity.type !== "app";
   const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : node.entity.type === "function" ? "⚡" : "📦";
 
   return (
