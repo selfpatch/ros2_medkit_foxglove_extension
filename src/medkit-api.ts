@@ -36,6 +36,12 @@ import {
   putEntityConfiguration,
   getEntityOperations,
   postEntityExecution,
+  getEntityFaults,
+  deleteEntityFault,
+  deleteAllEntityFaults,
+  getEntityFault,
+  getEntityBulkDataCategories,
+  getEntityBulkDataDescriptors,
 } from "./api-dispatch";
 
 // ---------------------------------------------------------------------------
@@ -386,22 +392,22 @@ export class MedkitApiClient {
   // ── Faults ────────────────────────────────────────────────────────
 
   async listAllFaults(): Promise<ListFaultsResponse> {
-    const raw = await fetchJSON<unknown>(this.url("faults"));
-    const data = raw as { items?: unknown[]; "x-medkit"?: { count?: number } };
-    const items = (data.items || []).map((f) => this.transformFault(f));
-    return { items, count: data["x-medkit"]?.count || items.length };
+    const { data, error } = await this.client.GET("/faults");
+    if (error) throwApiError(error);
+    const raw = data as unknown as { items?: unknown[]; "x-medkit"?: { count?: number } };
+    const items = (raw.items || []).map((f) => this.transformFault(f));
+    return { items, count: raw["x-medkit"]?.count || items.length };
   }
 
   async listEntityFaults(
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<ListFaultsResponse> {
-    const raw = await fetchJSON<unknown>(
-      this.url(`${entityType}/${entityId}/faults`)
-    );
-    const data = raw as { items?: unknown[]; "x-medkit"?: { count?: number } };
-    const items = (data.items || []).map((f) => this.transformFault(f));
-    return { items, count: data["x-medkit"]?.count || items.length };
+    const { data, error } = await getEntityFaults(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    const raw = data as unknown as { items?: unknown[]; "x-medkit"?: { count?: number } };
+    const items = (raw.items || []).map((f) => this.transformFault(f));
+    return { items, count: raw["x-medkit"]?.count || items.length };
   }
 
   async clearFault(
@@ -409,21 +415,16 @@ export class MedkitApiClient {
     entityId: string,
     faultCode: string,
   ): Promise<void> {
-    const res = await fetch(
-      this.url(`${entityType}/${entityId}/faults/${encodeURIComponent(faultCode)}`),
-      { method: "DELETE" }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { error } = await deleteEntityFault(this.client, entityType, entityId, faultCode);
+    if (error) throwApiError(error);
   }
 
   async clearAllFaults(
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<void> {
-    const res = await fetch(this.url(`${entityType}/${entityId}/faults`), {
-      method: "DELETE",
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { error } = await deleteAllEntityFaults(this.client, entityType, entityId);
+    if (error) throwApiError(error);
   }
 
   // ── Fault SSE stream ──────────────────────────────────────────────
@@ -436,9 +437,11 @@ export class MedkitApiClient {
     entityId: string,
     faultCode: string,
   ): Promise<FaultResponse> {
-    return fetchJSON<FaultResponse>(
-      this.url(`${entityType}/${entityId}/faults/${encodeURIComponent(faultCode)}`),
-    );
+    const { data, error } = await getEntityFault(this.client, entityType, entityId, faultCode);
+    if (error) throwApiError(error);
+    // The schema uses an open-form response object; cast through unknown to
+    // our local FaultResponse type which maps the wire shape exactly.
+    return data as unknown as FaultResponse;
   }
 
   // ── Bulk Data ─────────────────────────────────────────────────────
@@ -450,13 +453,9 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<BulkDataCategory> {
-    try {
-      return await fetchJSON<BulkDataCategory>(
-        this.url(`${entityType}/${entityId}/bulk-data`),
-      );
-    } catch {
-      return { items: [] };
-    }
+    const { data, error } = await getEntityBulkDataCategories(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    return data as unknown as BulkDataCategory;
   }
 
   /**
@@ -467,13 +466,14 @@ export class MedkitApiClient {
     entityId: string,
     category: string,
   ): Promise<BulkDataList> {
-    try {
-      return await fetchJSON<BulkDataList>(
-        this.url(`${entityType}/${entityId}/bulk-data/${encodeURIComponent(category)}`),
-      );
-    } catch {
-      return { items: [] };
-    }
+    const { data, error } = await getEntityBulkDataDescriptors(
+      this.client,
+      entityType,
+      entityId,
+      category,
+    );
+    if (error) throwApiError(error);
+    return data as unknown as BulkDataList;
   }
 
   /**

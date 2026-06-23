@@ -152,6 +152,143 @@ export function getEntityOperations(
 }
 
 // =============================================================================
+// Faults
+// =============================================================================
+
+export function getEntityFaults(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/faults", { params: { path: { app_id: entityId } } });
+    case "components":
+      return client.GET("/components/{component_id}/faults", { params: { path: { component_id: entityId } } });
+    case "areas":
+      return client.GET("/areas/{area_id}/faults", { params: { path: { area_id: entityId } } });
+    case "functions":
+      return client.GET("/functions/{function_id}/faults", { params: { path: { function_id: entityId } } });
+  }
+}
+
+export function deleteEntityFault(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  faultCode: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.DELETE("/apps/{app_id}/faults/{fault_code}", {
+        params: { path: { app_id: entityId, fault_code: faultCode } },
+      });
+    case "components":
+      return client.DELETE("/components/{component_id}/faults/{fault_code}", {
+        params: { path: { component_id: entityId, fault_code: faultCode } },
+      });
+    case "areas":
+      return client.DELETE("/areas/{area_id}/faults/{fault_code}", {
+        params: { path: { area_id: entityId, fault_code: faultCode } },
+      });
+    case "functions":
+      return client.DELETE("/functions/{function_id}/faults/{fault_code}", {
+        params: { path: { function_id: entityId, fault_code: faultCode } },
+      });
+  }
+}
+
+export function deleteAllEntityFaults(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.DELETE("/apps/{app_id}/faults", { params: { path: { app_id: entityId } } });
+    case "components":
+      return client.DELETE("/components/{component_id}/faults", { params: { path: { component_id: entityId } } });
+    case "areas":
+      return client.DELETE("/areas/{area_id}/faults", { params: { path: { area_id: entityId } } });
+    case "functions":
+      return client.DELETE("/functions/{function_id}/faults", { params: { path: { function_id: entityId } } });
+  }
+}
+
+export function getEntityFault(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  faultCode: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/faults/{fault_code}", {
+        params: { path: { app_id: entityId, fault_code: faultCode } },
+      });
+    case "components":
+      return client.GET("/components/{component_id}/faults/{fault_code}", {
+        params: { path: { component_id: entityId, fault_code: faultCode } },
+      });
+    case "areas":
+      return client.GET("/areas/{area_id}/faults/{fault_code}", {
+        params: { path: { area_id: entityId, fault_code: faultCode } },
+      });
+    case "functions":
+      return client.GET("/functions/{function_id}/faults/{fault_code}", {
+        params: { path: { function_id: entityId, fault_code: faultCode } },
+      });
+  }
+}
+
+// =============================================================================
+// Bulk Data
+// =============================================================================
+
+export function getEntityBulkDataCategories(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/bulk-data", { params: { path: { app_id: entityId } } });
+    case "components":
+      return client.GET("/components/{component_id}/bulk-data", { params: { path: { component_id: entityId } } });
+    case "areas":
+      return client.GET("/areas/{area_id}/bulk-data", { params: { path: { area_id: entityId } } });
+    case "functions":
+      return client.GET("/functions/{function_id}/bulk-data", { params: { path: { function_id: entityId } } });
+  }
+}
+
+export function getEntityBulkDataDescriptors(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  categoryId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/bulk-data/{category_id}", {
+        params: { path: { app_id: entityId, category_id: categoryId } },
+      });
+    case "components":
+      return client.GET("/components/{component_id}/bulk-data/{category_id}", {
+        params: { path: { component_id: entityId, category_id: categoryId } },
+      });
+    case "areas":
+      return client.GET("/areas/{area_id}/bulk-data/{category_id}", {
+        params: { path: { area_id: entityId, category_id: categoryId } },
+      });
+    case "functions":
+      return client.GET("/functions/{function_id}/bulk-data/{category_id}", {
+        params: { path: { function_id: entityId, category_id: categoryId } },
+      });
+  }
+}
+
+// =============================================================================
 // Executions
 // =============================================================================
 
