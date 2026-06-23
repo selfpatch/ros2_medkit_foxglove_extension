@@ -453,9 +453,13 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<BulkDataCategory> {
-    const { data, error } = await getEntityBulkDataCategories(this.client, entityType, entityId);
-    if (error) throwApiError(error);
-    return data as unknown as BulkDataCategory;
+    try {
+      const { data, error } = await getEntityBulkDataCategories(this.client, entityType, entityId);
+      if (error) throwApiError(error);
+      return data as unknown as BulkDataCategory;
+    } catch {
+      return { items: [] };
+    }
   }
 
   /**
@@ -466,14 +470,18 @@ export class MedkitApiClient {
     entityId: string,
     category: string,
   ): Promise<BulkDataList> {
-    const { data, error } = await getEntityBulkDataDescriptors(
-      this.client,
-      entityType,
-      entityId,
-      category,
-    );
-    if (error) throwApiError(error);
-    return data as unknown as BulkDataList;
+    try {
+      const { data, error } = await getEntityBulkDataDescriptors(
+        this.client,
+        entityType,
+        entityId,
+        category,
+      );
+      if (error) throwApiError(error);
+      return data as unknown as BulkDataList;
+    } catch {
+      return { items: [] };
+    }
   }
 
   /**

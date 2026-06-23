@@ -30,3 +30,34 @@ describe("MedkitApiClient.listComponents", () => {
         expect(comps[0].name).toBe("Host 1");
     });
 });
+
+function stubFetchError(status: number): void {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(
+            async () =>
+                new Response(JSON.stringify({ code: "ERR_TEST", message: "gateway error" }), {
+                    status,
+                    headers: { "Content-Type": "application/json" },
+                }),
+        ),
+    );
+}
+
+describe("MedkitApiClient.listBulkDataCategories", () => {
+    it("returns { items: [] } on gateway error instead of throwing", async () => {
+        stubFetchError(404);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.listBulkDataCategories("apps", "motor");
+        expect(result).toEqual({ items: [] });
+    });
+});
+
+describe("MedkitApiClient.listBulkData", () => {
+    it("returns { items: [] } on gateway error instead of throwing", async () => {
+        stubFetchError(500);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.listBulkData("apps", "motor", "rosbags");
+        expect(result).toEqual({ items: [] });
+    });
+});
