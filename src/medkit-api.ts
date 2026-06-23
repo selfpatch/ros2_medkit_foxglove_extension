@@ -29,6 +29,14 @@ import { createGatewayClient, MedkitApiError } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
 import { isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
 import type { MedkitError } from "@selfpatch/ros2-medkit-client-ts";
+import {
+  getEntityData,
+  getEntityDataItem,
+  getEntityConfigurations,
+  putEntityConfiguration,
+  getEntityOperations,
+  postEntityExecution,
+} from "./api-dispatch";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -238,9 +246,9 @@ export class MedkitApiClient {
         type_info?: { schema?: unknown };
       };
     }
-    const items = unwrapItems<DataItem>(
-      await fetchJSON<unknown>(this.url(`${entityType}/${entityId}/data`))
-    );
+    const { data, error } = await getEntityData(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    const items = unwrapItems<DataItem>(data as unknown);
     return items.map((item) => {
       const direction = item["x-medkit"]?.ros2?.direction;
       return {
@@ -271,9 +279,9 @@ export class MedkitApiClient {
         subscriber_count?: number;
       };
     }
-    const item = await fetchJSON<Resp>(
-      this.url(`${entityType}/${entityId}/data/${encodeURIComponent(topicName)}`)
-    );
+    const { data, error } = await getEntityDataItem(this.client, entityType, entityId, topicName);
+    if (error) throwApiError(error);
+    const item = data as unknown as Resp;
     const r = item["x-medkit"]?.ros2;
     return {
       topic: r?.topic || topicName,
@@ -294,17 +302,16 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<ComponentConfigurations> {
-    const raw = await fetchJSON<unknown>(
-      this.url(`${entityType}/${entityId}/configurations`)
-    );
-    const data = raw as {
+    const { data, error } = await getEntityConfigurations(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    const raw = data as unknown as {
       "x-medkit"?: {
         entity_id?: string;
         ros2?: { node?: string };
         parameters?: Parameter[];
       };
     };
-    const xm = data["x-medkit"] || {};
+    const xm = raw["x-medkit"] || {};
     return {
       component_id: xm.entity_id || entityId,
       node_name: xm.ros2?.node || entityId,
@@ -318,14 +325,14 @@ export class MedkitApiClient {
     paramName: string,
     value: unknown,
   ): Promise<void> {
-    await fetchJSON(
-      this.url(`${entityType}/${entityId}/configurations/${encodeURIComponent(paramName)}`),
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: value }),
-      }
+    const { error } = await putEntityConfiguration(
+      this.client,
+      entityType,
+      entityId,
+      paramName,
+      { data: value },
     );
+    if (error) throwApiError(error);
   }
 
   // ── Operations ────────────────────────────────────────────────────
@@ -342,9 +349,9 @@ export class MedkitApiClient {
         ros2?: { kind?: "service" | "action"; service?: string; action?: string; type?: string };
       };
     }
-    const items = unwrapItems<RawOp>(
-      await fetchJSON<unknown>(this.url(`${entityType}/${entityId}/operations`))
-    );
+    const { data, error } = await getEntityOperations(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    const items = unwrapItems<RawOp>(data as unknown);
     return items.map((op) => {
       const r = op["x-medkit"]?.ros2;
       let kind: "service" | "action" = "service";
@@ -365,17 +372,15 @@ export class MedkitApiClient {
     operationName: string,
     request: CreateExecutionRequest,
   ): Promise<CreateExecutionResponse> {
-    return fetchJSON<CreateExecutionResponse>(
-      this.url(
-        `${entityType}/${entityId}/operations/${encodeURIComponent(operationName)}/executions`
-      ),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      },
-      30_000
+    const { data, error } = await postEntityExecution(
+      this.client,
+      entityType,
+      entityId,
+      operationName,
+      request,
     );
+    if (error) throwApiError(error);
+    return data as unknown as CreateExecutionResponse;
   }
 
   // ── Faults ────────────────────────────────────────────────────────
