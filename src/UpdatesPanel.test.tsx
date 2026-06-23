@@ -1,6 +1,6 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 
@@ -147,5 +147,71 @@ describe("UpdatesPanelView", () => {
         await waitFor(() => {
             expect(screen.getByRole("alert").textContent).toContain("boom");
         });
+    });
+
+    it("shows an Error badge (not Ready) when a per-id /status fetch fails", async () => {
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: ["u1"] }) },
+            {
+                method: "GET",
+                pathSuffix: "/updates/u1/status",
+                response: () => jsonResponse({ message: "boom" }, 500),
+            },
+        ]);
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => expect(screen.getByText("Error")).toBeInTheDocument());
+        expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+    });
+
+    it("disables Prepare/Execute/Automated for a completed update but keeps Delete", async () => {
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: ["u1"] }) },
+            {
+                method: "GET",
+                pathSuffix: "/updates/u1/status",
+                response: () => jsonResponse({ status: "completed", progress: 100 }),
+            },
+        ]);
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => screen.getByText("u1"));
+        expect(screen.getByRole("button", { name: /^prepare$/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /^execute$/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /^automated$/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /^delete$/i })).toBeEnabled();
+    });
+
+    it("asks for confirmation before issuing DELETE", async () => {
+        const deleteCall = vi.fn(() => new Response(null, { status: 204 }));
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: ["u1"] }) },
+            {
+                method: "GET",
+                pathSuffix: "/updates/u1/status",
+                response: () => jsonResponse({ status: "pending" }),
+            },
+            { method: "DELETE", pathSuffix: "/updates/u1", response: deleteCall },
+        ]);
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => screen.getByText("u1"));
+        await user.click(screen.getByRole("button", { name: /^delete$/i }));
+        const dialog = await screen.findByRole("dialog", { name: /confirm delete/i });
+        expect(deleteCall).not.toHaveBeenCalled();
+        await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+        expect(deleteCall).toHaveBeenCalled();
+    });
+
+    it("closes the Register dialog on Escape", async () => {
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: [] }) },
+        ]);
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await user.click(screen.getByRole("button", { name: /^register$/i }));
+        expect(await screen.findByRole("dialog", { name: /register update/i })).toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        await waitFor(() =>
+            expect(screen.queryByRole("dialog", { name: /register update/i })).not.toBeInTheDocument(),
+        );
     });
 });

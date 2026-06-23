@@ -1,4 +1,4 @@
-// Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 
 /**
  * Faults Dashboard panel — real-time monitoring of all system faults.
@@ -9,6 +9,7 @@ import { type PanelExtensionContext } from "@foxglove/extension";
 import {
   type ReactElement,
   useEffect,
+  useMemo,
   useState,
   useCallback,
   useRef,
@@ -63,7 +64,10 @@ function FaultsDashboardPanel({
     ...((context.initialState ?? {}) as Partial<PanelKnobs>),
   }));
 
-  const state: PanelState = { ...conn, ...knobs };
+  // Memoized so the merged object's identity only changes when conn or
+  // knobs actually change; otherwise the saveState / settings-editor
+  // effects below would re-run on every render.
+  const state: PanelState = useMemo(() => ({ ...conn, ...knobs }), [conn, knobs]);
 
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);

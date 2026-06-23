@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 import { describe, expect, it, vi } from "vitest";
 import {
     UpdatesApiError,
@@ -31,6 +31,13 @@ describe("fetchUpdateIds", () => {
         await expect(fetchUpdateIds(BASE, f)).resolves.toEqual([]);
     });
 
+    it("filters out non-string items instead of crashing on a malformed list", async () => {
+        const f = vi.fn(async () =>
+            jsonResponse({ items: ["ok", 123, null, { id: "x" }, "ok2"] }),
+        ) as unknown as typeof fetch;
+        await expect(fetchUpdateIds(BASE, f)).resolves.toEqual(["ok", "ok2"]);
+    });
+
     it("throws UpdatesApiError on non-ok response", async () => {
         const f = vi.fn(async () => jsonResponse({ message: "no provider" }, 501)) as unknown as typeof fetch;
         await expect(fetchUpdateIds(BASE, f)).rejects.toMatchObject({
@@ -60,11 +67,23 @@ describe("fetchUpdateStatus", () => {
         );
     });
 
-    it("rejects when status field missing", async () => {
+    it("rejects with status 0 when status field missing", async () => {
         const f = vi.fn(async () => jsonResponse({})) as unknown as typeof fetch;
+        // status 0 (not 404/501) is the contract the panel's notAvailable
+        // branch relies on to NOT treat a malformed status as "no provider".
         await expect(fetchUpdateStatus(BASE, "u1", f)).rejects.toMatchObject({
             name: "UpdatesApiError",
+            status: 0,
         });
+    });
+
+    it("drops a non-numeric progress field", async () => {
+        const f = vi.fn(async () =>
+            jsonResponse({ status: "inProgress", progress: "50%" }),
+        ) as unknown as typeof fetch;
+        const s = await fetchUpdateStatus(BASE, "u1", f);
+        expect(s.status).toBe("inProgress");
+        expect(s.progress).toBeUndefined();
     });
 });
 

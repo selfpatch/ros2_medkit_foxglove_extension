@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 //
 // Integration smoke: drive the actual updates-api.ts (not a mock) against
 // a live ros2_medkit gateway and assert SOVD spec shape end-to-end.

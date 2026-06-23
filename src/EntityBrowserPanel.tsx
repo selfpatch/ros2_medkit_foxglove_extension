@@ -1,4 +1,4 @@
-// Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 
 /**
  * Entity Browser panel — tree view of ros2_medkit areas → components → apps.
@@ -138,9 +138,9 @@ function EntityBrowserPanel({
         c.listFunctions().catch(() => [] as SovdEntity[]),
       ]);
       // Gateways running in runtime_only mode without a manifest report
-      // zero areas but still expose synthetic components. Fall back to
-      // /components so the tree is not empty just because no manifest is
-      // configured.
+      // zero areas but still expose the host machine as a single Component
+      // (via HostInfoProvider). Fall back to /components so the tree is not
+      // empty just because no manifest is configured.
       const roots: SovdEntity[] =
         areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
       setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));

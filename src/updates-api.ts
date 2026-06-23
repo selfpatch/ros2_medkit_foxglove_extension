@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 //
 // SOVD ISO 17978-3 client for the gateway's /updates resource. Mirrors the
 // canonical implementation in ros2_medkit_web_ui's `lib/updates-api.ts` so
@@ -48,7 +48,12 @@ export async function fetchUpdateIds(
     const res = await fetchImpl(`${baseUrl}/updates`, { signal });
     await ensureOk(res);
     const data = (await res.json()) as { items?: unknown };
-    return Array.isArray(data?.items) ? (data.items as string[]) : [];
+    // Filter to strings instead of blind-casting: a malformed item list
+    // (non-string element from a buggy provider/proxy) must degrade to
+    // fewer rows, not crash the panel's `id.localeCompare` sort at render.
+    return Array.isArray(data?.items)
+        ? (data.items as unknown[]).filter((x): x is string => typeof x === "string")
+        : [];
 }
 
 /** GET /updates/{id}/status - returns status with progress. */
@@ -63,6 +68,12 @@ export async function fetchUpdateStatus(
     const data = (await res.json()) as Partial<UpdateStatus>;
     if (typeof data?.status !== "string") {
         throw new UpdatesApiError("Invalid status response", 0);
+    }
+    // `status` is the only field we hard-require; drop a non-numeric
+    // `progress` so the panel never renders `NaN%` / a bogus aria-valuenow
+    // from a non-conformant gateway.
+    if (data.progress !== undefined && typeof data.progress !== "number") {
+        delete data.progress;
     }
     return data as UpdateStatus;
 }

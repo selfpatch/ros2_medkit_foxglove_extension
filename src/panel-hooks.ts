@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 //
 // Reusable React hooks that every panel in this extension needs:
 // - useSharedConnection: state + cross-panel listener for the gateway URL
@@ -8,7 +8,7 @@
 // per panel * 3 panels), drifting subtly each time we touched it.
 
 import type { Immutable, PanelExtensionContext, RenderState } from "@foxglove/extension";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
     type GatewayConnection,
@@ -35,13 +35,15 @@ export interface SharedConnectionApi {
 export function useSharedConnection(overrides?: Partial<GatewayConnection>): SharedConnectionApi {
     const [conn, setConn] = useState<GatewayConnection>(() => loadSharedConnection(overrides));
     useEffect(() => onSharedConnectionChange(setConn), []);
-    return {
-        conn,
-        update: (next) => {
-            saveSharedConnection(next);
-            setConn(next);
-        },
-    };
+    // Stable identity so consumer effects that list `update` in their
+    // dependency array (e.g. the settings-editor effect) do not re-run on
+    // every render. setConn covers the no-window/test path where
+    // saveSharedConnection dispatches no event.
+    const update = useCallback((next: GatewayConnection) => {
+        saveSharedConnection(next);
+        setConn(next);
+    }, []);
+    return { conn, update };
 }
 
 /**
@@ -61,6 +63,12 @@ export function useColorSchemeTheme(context: PanelExtensionContext): Theme {
             }
             setRenderDone(() => done);
         };
+        // Clear the handler on unmount / context change so Foxglove cannot
+        // fire our captured closure (and setTheme/setRenderDone) after the
+        // React tree is gone.
+        return () => {
+            context.onRender = undefined;
+        };
     }, [context]);
 
     useEffect(() => {
@@ -68,4 +76,76 @@ export function useColorSchemeTheme(context: PanelExtensionContext): Theme {
     }, [renderDone]);
 
     return theme;
+}
+
+/**
+ * Accessibility wiring for a modal dialog. While `active`:
+ * - moves keyboard focus into the dialog (first focusable, else container),
+ * - traps Tab / Shift+Tab within the dialog's focusables,
+ * - closes on Escape,
+ * - restores focus to the previously-focused element on close.
+ *
+ * Returns a ref to attach to the dialog container. SSR/jsdom-safe: bails out
+ * when `document` is unavailable.
+ */
+export function useDialogA11y(
+    active: boolean,
+    onClose: () => void,
+): RefObject<HTMLDivElement> {
+    const ref = useRef<HTMLDivElement>(null);
+    // Keep the latest onClose without re-running the effect on every render.
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+
+    useEffect(() => {
+        if (!active || typeof document === "undefined") return;
+        const container = ref.current;
+        const previouslyFocused = document.activeElement as HTMLElement | null;
+
+        const focusables = (): HTMLElement[] =>
+            container
+                ? Array.from(
+                      container.querySelectorAll<HTMLElement>(
+                          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                      ),
+                  )
+                : [];
+
+        // Initial focus: first focusable, else the container itself.
+        const first = focusables()[0];
+        (first ?? container)?.focus();
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                e.stopPropagation();
+                onCloseRef.current();
+                return;
+            }
+            if (e.key !== "Tab") return;
+            const items = focusables();
+            if (items.length === 0) {
+                e.preventDefault();
+                container?.focus();
+                return;
+            }
+            const firstEl = items[0];
+            const lastEl = items[items.length - 1];
+            const activeEl = document.activeElement;
+            if (e.shiftKey && activeEl === firstEl) {
+                e.preventDefault();
+                lastEl.focus();
+            } else if (!e.shiftKey && activeEl === lastEl) {
+                e.preventDefault();
+                firstEl.focus();
+            }
+        };
+
+        document.addEventListener("keydown", onKeyDown, true);
+        return () => {
+            document.removeEventListener("keydown", onKeyDown, true);
+            previouslyFocused?.focus?.();
+        };
+    }, [active]);
+
+    return ref;
 }

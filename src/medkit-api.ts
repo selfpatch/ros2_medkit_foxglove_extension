@@ -1,4 +1,4 @@
-// Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 
 /**
  * HTTP API client for the ros2_medkit gateway.
@@ -114,9 +114,10 @@ export class MedkitApiClient {
     }));
   }
 
-  /** Top-level component list - used as tree roots when /areas is empty
-   * (gateway running in runtime_only mode without a manifest still
-   * discovers synthetic components per ROS namespace). */
+  /** Top-level component list - used as tree roots when /areas is empty.
+   * In runtime_only mode without a manifest the gateway reports zero areas
+   * but still exposes the host machine as a single Component (id = hostname,
+   * via HostInfoProvider); it does NOT synthesize per-namespace components. */
   async listComponents(): Promise<SovdEntity[]> {
     const raw = await fetchJSON<unknown>(this.url("components"));
     const items = (Array.isArray(raw)
@@ -128,9 +129,10 @@ export class MedkitApiClient {
       }>;
     return items.map((c) => ({
       id: c.id,
-      // Auto-discovered components come back with name == id (a
-      // hostname-derived hash like 'e9e6f682e4bf'). Prefer the human-
-      // readable description when the name is just the id.
+      // The host Component often comes back with name == id (a
+      // hostname-derived hash like 'e9e6f682e4bf'). Use the description as
+      // a friendlier label when present, else fall back to the id - the
+      // list response is not guaranteed to carry a description.
       name: c.name && c.name !== c.id ? c.name : c.description || c.id,
       type: "component",
       href: `/components/${c.id}`,
