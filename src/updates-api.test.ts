@@ -31,11 +31,11 @@ describe("fetchUpdateIds", () => {
         await expect(fetchUpdateIds(BASE, f)).resolves.toEqual([]);
     });
 
-    it("filters out non-string items instead of crashing on a malformed list", async () => {
+    it("accepts string ids and {id} objects, dropping anything else", async () => {
         const f = vi.fn(async () =>
-            jsonResponse({ items: ["ok", 123, null, { id: "x" }, "ok2"] }),
+            jsonResponse({ items: ["ok", 123, null, { id: "x" }, { name: "no-id" }, "ok2"] }),
         ) as unknown as typeof fetch;
-        await expect(fetchUpdateIds(BASE, f)).resolves.toEqual(["ok", "ok2"]);
+        await expect(fetchUpdateIds(BASE, f)).resolves.toEqual(["ok", "x", "ok2"]);
     });
 
     it("throws UpdatesApiError on non-ok response", async () => {
@@ -44,6 +44,17 @@ describe("fetchUpdateIds", () => {
             name: "UpdatesApiError",
             status: 501,
             message: "no provider",
+        });
+    });
+
+    it("surfaces a non-JSON error body instead of dropping it to 'HTTP <status>'", async () => {
+        const f = vi.fn(
+            async () => new Response("upstream exploded", { status: 502 }),
+        ) as unknown as typeof fetch;
+        await expect(fetchUpdateIds(BASE, f)).rejects.toMatchObject({
+            name: "UpdatesApiError",
+            status: 502,
+            message: "upstream exploded",
         });
     });
 });

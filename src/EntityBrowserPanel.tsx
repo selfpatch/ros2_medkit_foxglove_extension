@@ -73,6 +73,9 @@ function EntityBrowserPanel({
   // Tree
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [functions, setFunctions] = useState<TreeNode[]>([]);
+  // Heading for the root section: "Areas" normally, "Components" when the
+  // gateway exposed no areas and we fell back to /components.
+  const [rootLabel, setRootLabel] = useState<"Areas" | "Components">("Areas");
 
   // Selection
   const [selected, setSelected] = useState<SovdEntity | null>(null);
@@ -143,6 +146,7 @@ function EntityBrowserPanel({
       // empty just because no manifest is configured.
       const roots: SovdEntity[] =
         areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+      setRootLabel(areas.length > 0 ? "Areas" : "Components");
       setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
       setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
     } catch (err) {
@@ -293,7 +297,7 @@ function EntityBrowserPanel({
         {tree.length === 0 && functions.length === 0 && <div style={S.emptyState(theme)}>No entities found</div>}
         {tree.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>Areas</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>{rootLabel}</div>
             {tree.map((node, i) => (
               <TreeNodeRow
                 key={node.entity.id}

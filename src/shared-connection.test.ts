@@ -64,4 +64,13 @@ describe("shared-connection", () => {
         );
         expect(joinConnection({ gatewayUrl: "http://x:8080", basePath: "" })).toBe("http://x:8080");
     });
+
+    it("joinConnection adds http:// for a bare host and trims whitespace", () => {
+        expect(joinConnection({ gatewayUrl: "localhost:8080", basePath: "api/v1" })).toBe(
+            "http://localhost:8080/api/v1",
+        );
+        expect(joinConnection({ gatewayUrl: "  https://gw:8443  ", basePath: "api/v1" })).toBe(
+            "https://gw:8443/api/v1",
+        );
+    });
 });

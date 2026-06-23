@@ -22,16 +22,27 @@ export interface UpdateStatus {
 }
 
 async function ensureOk(res: Response): Promise<void> {
-    if (!res.ok) {
-        let message = `HTTP ${res.status}`;
-        try {
-            const body = (await res.json()) as { message?: string };
-            if (body.message) message = body.message;
-        } catch {
-            // ignore parse errors
+    if (res.ok) return;
+    let message = `HTTP ${res.status}`;
+    try {
+        // Read as text first so a non-JSON error body (plain text / HTML
+        // from a proxy) is still surfaced instead of dropped to "HTTP <n>".
+        const text = await res.text();
+        if (text) {
+            try {
+                const body = JSON.parse(text) as { message?: unknown };
+                message =
+                    typeof body.message === "string" && body.message
+                        ? body.message
+                        : text.slice(0, 500);
+            } catch {
+                message = text.slice(0, 500);
+            }
         }
-        throw new UpdatesApiError(message, res.status);
+    } catch {
+        // ignore body read errors
     }
+    throw new UpdatesApiError(message, res.status);
 }
 
 function updatePath(baseUrl: string, id: string, suffix?: string): string {
@@ -48,12 +59,19 @@ export async function fetchUpdateIds(
     const res = await fetchImpl(`${baseUrl}/updates`, { signal });
     await ensureOk(res);
     const data = (await res.json()) as { items?: unknown };
-    // Filter to strings instead of blind-casting: a malformed item list
-    // (non-string element from a buggy provider/proxy) must degrade to
-    // fewer rows, not crash the panel's `id.localeCompare` sort at render.
-    return Array.isArray(data?.items)
-        ? (data.items as unknown[]).filter((x): x is string => typeof x === "string")
-        : [];
+    // Accept both the SOVD `{items: [<id string>]}` shape and gateways that
+    // return `{items: [{id, ...}]}` objects; anything else is dropped so a
+    // malformed item never reaches the panel's `id.localeCompare` sort.
+    if (!Array.isArray(data?.items)) return [];
+    return (data.items as unknown[])
+        .map((it): string | undefined => {
+            if (typeof it === "string") return it;
+            if (it && typeof it === "object" && typeof (it as { id?: unknown }).id === "string") {
+                return (it as { id: string }).id;
+            }
+            return undefined;
+        })
+        .filter((x): x is string => x !== undefined);
 }
 
 /** GET /updates/{id}/status - returns status with progress. */
