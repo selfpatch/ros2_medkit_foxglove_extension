@@ -25,6 +25,9 @@ import type {
   BulkDataList,
 } from "./types";
 
+import { createGatewayClient, MedkitApiError } from "./gateway-client";
+import type { MedkitClient } from "./gateway-client";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -72,10 +75,15 @@ function unwrapItems<T>(response: unknown): T[] {
 export class MedkitApiClient {
   private readonly base: string;
   private readonly prefix: string;
+  private readonly client: MedkitClient;
 
   constructor(serverUrl: string, baseEndpoint = "") {
     this.base = normalizeUrl(serverUrl);
     this.prefix = normalizeBasePath(baseEndpoint);
+    this.client = createGatewayClient({
+      gatewayUrl: serverUrl,
+      basePath: baseEndpoint,
+    });
   }
 
   private url(endpoint: string): string {
@@ -87,23 +95,25 @@ export class MedkitApiClient {
 
   async ping(): Promise<boolean> {
     try {
-      const res = await fetch(this.url("health"), {
-        signal: AbortSignal.timeout(3_000),
-      });
-      return res.ok;
+      const { error } = await this.client.GET("/health" as never);
+      return !error;
     } catch {
       return false;
     }
   }
 
   async getVersionInfo(): Promise<VersionInfo> {
-    return fetchJSON<VersionInfo>(this.url("version-info"));
+    const { data, error } = await this.client.GET("/version-info" as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    return data as unknown as VersionInfo;
   }
 
   // ── Entity tree ───────────────────────────────────────────────────
 
   async listAreas(): Promise<SovdEntity[]> {
-    const raw = await fetchJSON<unknown>(this.url("areas"));
+    const { data, error } = await this.client.GET("/areas" as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const raw = data as unknown;
     const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).areas ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string }>;
     return items.map((a) => ({
       id: a.id,
@@ -119,7 +129,9 @@ export class MedkitApiClient {
    * but still exposes the host machine as a single Component (id = hostname,
    * via HostInfoProvider); it does NOT synthesize per-namespace components. */
   async listComponents(): Promise<SovdEntity[]> {
-    const raw = await fetchJSON<unknown>(this.url("components"));
+    const { data, error } = await this.client.GET("/components" as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const raw = data as unknown;
     const items = (Array.isArray(raw)
       ? raw
       : ((raw as Record<string, unknown>).items ?? [])) as Array<{
@@ -145,7 +157,11 @@ export class MedkitApiClient {
   }
 
   async listAreaComponents(areaId: string): Promise<SovdEntity[]> {
-    const raw = await fetchJSON<unknown>(this.url(`areas/${areaId}/components`));
+    const { data, error } = await this.client.GET("/areas/{area_id}/components" as never, {
+      params: { path: { area_id: areaId } },
+    } as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const raw = data as unknown;
     const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).components ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string; fqn?: string }>;
     return items.map((c) => ({
       id: c.id,
@@ -163,9 +179,11 @@ export class MedkitApiClient {
       href?: string;
       "x-medkit"?: { ros2?: { node?: string }; component_id?: string };
     }
-    const items = unwrapItems<ApiApp>(
-      await fetchJSON<unknown>(this.url(`components/${componentId}/hosts`))
-    );
+    const { data, error } = await this.client.GET("/components/{component_id}/hosts" as never, {
+      params: { path: { component_id: componentId } },
+    } as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const items = unwrapItems<ApiApp>(data as unknown);
     return items.map((item) => {
       const nodePath = item["x-medkit"]?.ros2?.node || `/${item.name}`;
       const lastSlash = nodePath.lastIndexOf("/");
@@ -184,9 +202,9 @@ export class MedkitApiClient {
   }
 
   async listFunctions(): Promise<SovdEntity[]> {
-    const items = unwrapItems<{ id: string; name: string; description?: string }>(
-      await fetchJSON<unknown>(this.url("functions"))
-    );
+    const { data, error } = await this.client.GET("/functions" as never);
+    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const items = unwrapItems<{ id: string; name: string; description?: string }>(data as unknown);
     return items.map((f) => ({
       id: f.id,
       name: f.name || f.id,
