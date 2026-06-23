@@ -1,4 +1,4 @@
-# ros2_medkit Diagnostics — Foxglove Extension
+# ros2_medkit Diagnostics - Foxglove Extension
 
 Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gateway** HTTP API.
 
@@ -6,8 +6,9 @@ Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gate
 
 | Panel | Description |
 |-------|-------------|
-| **ros2_medkit Entity Browser** | Tree view of areas → components → apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
+| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
 | **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
+| **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages, and run Prepare / Execute / Automated / Delete with live status polling and per-update progress. Prepare/Execute/Automated are disabled on completed/failed updates; Delete asks for confirmation. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
 
 ## Prerequisites
 
@@ -33,26 +34,34 @@ npm run package
 After `local-install`, restart Foxglove Studio and add panels from the panel menu:
 - **ros2_medkit Entity Browser**
 - **ros2_medkit Faults Dashboard**
+- **ros2_medkit Updates**
 
 ## Configuration
 
 Each panel has a settings editor (gear icon) where you configure:
 
-- **Server URL** — Gateway address (e.g., `http://localhost:8080`)
-- **Base path** — API path prefix (default: `api/v1`)
+- **Server URL** - Gateway address (e.g., `http://localhost:8080`)
+- **Base path** - API path prefix (default: `api/v1`)
 
-The Faults Dashboard has additional settings for refresh rate and SSE streaming.
+The Server URL and Base path are shared across all three panels (backed by
+`localStorage`), so setting them on one panel updates the others. The Faults
+Dashboard has additional, panel-local settings for refresh rate and SSE
+streaming.
 
 ## Architecture
 
 ```
 src/
-├── index.ts                   # Extension entry — registers both panels
+├── index.ts                   # Extension entry - registers all three panels
 ├── types.ts                   # ros2_medkit gateway type definitions
 ├── medkit-api.ts              # HTTP API client for ros2_medkit gateway
+├── updates-api.ts             # SOVD /updates resource client
+├── shared-connection.ts       # Cross-panel gateway connection (localStorage)
+├── panel-hooks.ts             # Shared hooks (connection, theme, dialog a11y)
 ├── styles.ts                  # Inline style helpers (dark/light theme)
 ├── EntityBrowserPanel.tsx     # Entity tree + detail tabs
-└── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
+├── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
+└── UpdatesPanel.tsx           # SOVD updates catalog + actions
 ```
 
 ## Compatibility

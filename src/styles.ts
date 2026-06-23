@@ -1,4 +1,4 @@
-// Copyright 2024–2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 
 /**
  * Shared inline-style helpers for Foxglove panels.

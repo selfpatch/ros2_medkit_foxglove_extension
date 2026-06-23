@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 //
 // Single source of truth for the gateway connection used by every panel
 // in this extension. Without this, every panel had its own gatewayUrl /

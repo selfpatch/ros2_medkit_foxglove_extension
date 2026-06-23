@@ -1,8 +1,8 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+// Copyright 2024-2026 bburda. Apache-2.0 license.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
-import { useSharedConnection } from "./panel-hooks";
+import { useDialogA11y, useSharedConnection } from "./panel-hooks";
 import { saveSharedConnection } from "./shared-connection";
 
 describe("useSharedConnection", () => {
@@ -31,5 +31,25 @@ describe("useSharedConnection", () => {
             saveSharedConnection({ gatewayUrl: "http://peer:5000", basePath: "api/v1" });
         });
         expect(result.current.conn.gatewayUrl).toBe("http://peer:5000");
+    });
+});
+
+describe("useDialogA11y", () => {
+    it("calls onClose on Escape while active", () => {
+        const onClose = vi.fn();
+        renderHook(() => useDialogA11y(true, onClose));
+        act(() => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores Escape while inactive", () => {
+        const onClose = vi.fn();
+        renderHook(() => useDialogA11y(false, onClose));
+        act(() => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(onClose).not.toHaveBeenCalled();
     });
 });

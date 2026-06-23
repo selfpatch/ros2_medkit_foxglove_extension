@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Selfpatch GmbH. Apache-2.0 license.
+// Copyright 2024-2026 bburda. Apache-2.0 license.
 //
 // Foxglove panel for the SOVD /updates resource. Mirrors the structure of
 // ros2_medkit_web_ui's UpdatesDashboard so the two clients stay aligned:
@@ -29,7 +29,7 @@ import {
     type UpdateStatus,
 } from "./updates-api";
 import { type GatewayConnection, joinConnection } from "./shared-connection";
-import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { useColorSchemeTheme, useDialogA11y, useSharedConnection } from "./panel-hooks";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -39,6 +39,9 @@ const ACTIVE_INTERVAL_MS = 2000;
 interface UpdateEntry {
     id: string;
     status: UpdateStatus | null;
+    // Set when the per-id /status fetch failed for a reason other than the
+    // benign "no status yet" 404, so a real error is not shown as "Ready".
+    error?: string;
 }
 
 function statusColor(status: string | undefined, theme: Theme): string {
@@ -56,14 +59,41 @@ function statusColor(status: string | undefined, theme: Theme): string {
     }
 }
 
-// While an operation is mid-flight nothing else makes sense; otherwise
-// every SOVD action is on the table - the gateway will reject e.g. an
-// execute call before prepare with a clean 409, which surfaces in the
-// error banner. Better to let users try than hide buttons they don't
-// realise they have.
+// Relative luminance (WCAG) of a #rgb or #rrggbb color.
+function luminance(hex: string): number {
+    let h = hex.trim().replace(/^#/, "");
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    if (!/^[0-9a-f]{6}$/i.test(h)) return 0;
+    const int = parseInt(h, 16);
+    const chan = [(int >> 16) & 255, (int >> 8) & 255, int & 255].map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * chan[0] + 0.7152 * chan[1] + 0.0722 * chan[2];
+}
+
+// Pick black or white text for AA contrast against a status-badge color,
+// instead of hardcoding #fff (which fails AA on the green/blue/red badges).
+function readableTextOn(bg: string): string {
+    return luminance(bg) > 0.179 ? "#000000" : "#ffffff";
+}
+
+// Mid-flight: no actions. Otherwise every SOVD action stays on the table,
+// but prepare/execute/automated are disabled with a tooltip on terminal
+// states (completed/failed) where re-running is a no-op the gateway would
+// reject with a 409. Delete is always offered.
 function actionsForStatus(status: string | undefined): string[] {
     if (status === "inProgress") return [];
     return ["prepare", "execute", "automated", "delete"];
+}
+
+// Tooltip / disabled reason for an action given the current status, or
+// undefined when the action is applicable.
+function actionDisabledReason(action: string, status: string | undefined): string | undefined {
+    if (action === "delete") return undefined;
+    if (status === "completed") return "Update already completed - re-running would be rejected by the gateway";
+    if (status === "failed") return "Update has failed - re-running would be rejected by the gateway";
+    return undefined;
 }
 
 const ACTION_LABEL: Record<string, string> = {
@@ -72,6 +102,16 @@ const ACTION_LABEL: Record<string, string> = {
     automated: "Automated",
     delete: "Delete",
 };
+
+// Friendly message + 501 detection shared by the action/register handlers
+// so a "no UpdateProvider" backend surfaces consistently, not as a raw
+// string on some verbs and the dedicated banner on others.
+function describeUpdatesError(e: unknown): { message: string; notAvailable: boolean } {
+    if (e instanceof UpdatesApiError && e.status === 501) {
+        return { message: "The gateway has no UpdateProvider configured (HTTP 501).", notAvailable: true };
+    }
+    return { message: e instanceof Error ? e.message : String(e), notAvailable: false };
+}
 
 // Responsive modal: backdrop fills the panel, card grows up to ~600px but
 // shrinks to 100% width on narrow Foxglove panels (no minWidth). Scrolls
@@ -120,8 +160,13 @@ export function UpdatesPanelView({
     const c = S.colors(theme);
     const [entries, setEntries] = useState<UpdateEntry[]>([]);
     const [error, setError] = useState<string | undefined>();
+    // Action errors live separately from the poll `error` so a background
+    // refresh's success-clear cannot wipe the message before the user reads
+    // it; cleared only when the user starts another action.
+    const [actionError, setActionError] = useState<string | undefined>();
     const [notAvailable, setNotAvailable] = useState(false);
     const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+    const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
     const [detailFor, setDetailFor] = useState<string | undefined>();
     const [detail, setDetail] = useState<Record<string, unknown> | undefined>();
     const [detailLoading, setDetailLoading] = useState(false);
@@ -130,6 +175,15 @@ export function UpdatesPanelView({
     const [registerError, setRegisterError] = useState<string | undefined>();
     const [registerBusy, setRegisterBusy] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
+    const detailAbortRef = useRef<AbortController | null>(null);
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            detailAbortRef.current?.abort();
+        };
+    }, []);
     const fImpl = fetchImpl ?? fetch;
 
     const refresh = useCallback(async () => {
@@ -140,12 +194,23 @@ export function UpdatesPanelView({
             const ids = await fetchUpdateIds(baseUrl, fImpl, controller.signal);
             if (controller.signal.aborted) return;
             const next: UpdateEntry[] = await Promise.all(
-                ids.map(async (id) => {
+                ids.map(async (id): Promise<UpdateEntry> => {
                     try {
                         const status = await fetchUpdateStatus(baseUrl, id, fImpl, controller.signal);
                         return { id, status };
-                    } catch {
-                        return { id, status: null };
+                    } catch (e) {
+                        // 404 = no status until the first operation runs
+                        // (benign -> "Ready"); AbortError = this refresh was
+                        // superseded and is discarded below. Any other error
+                        // (500/network) is carried so it is not masked as
+                        // "Ready".
+                        if (
+                            (e as { name?: string }).name === "AbortError" ||
+                            (e instanceof UpdatesApiError && e.status === 404)
+                        ) {
+                            return { id, status: null };
+                        }
+                        return { id, status: null, error: e instanceof Error ? e.message : String(e) };
                     }
                 }),
             );
@@ -185,6 +250,7 @@ export function UpdatesPanelView({
 
     const runAction = useCallback(
         async (id: string, action: string) => {
+            setActionError(undefined);
             setBusyIds((prev) => new Set(prev).add(id));
             try {
                 if (action === "prepare") await triggerPrepare(baseUrl, id, undefined, fImpl);
@@ -193,13 +259,24 @@ export function UpdatesPanelView({
                 else if (action === "delete") await deleteUpdate(baseUrl, id, fImpl);
                 await refresh();
             } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
+                if (!mountedRef.current) return;
+                const { message, notAvailable } = describeUpdatesError(e);
+                if (notAvailable) {
+                    // The dedicated "no UpdateProvider" banner covers this;
+                    // don't also show a duplicate red action-error banner.
+                    setNotAvailable(true);
+                    setActionError(undefined);
+                } else {
+                    setActionError(message);
+                }
             } finally {
-                setBusyIds((prev) => {
-                    const next = new Set(prev);
-                    next.delete(id);
-                    return next;
-                });
+                if (mountedRef.current) {
+                    setBusyIds((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                }
             }
         },
         [baseUrl, fImpl, refresh],
@@ -207,22 +284,30 @@ export function UpdatesPanelView({
 
     const openDetail = useCallback(
         async (id: string) => {
+            // Cancel a previous in-flight detail fetch so a late response
+            // for another id cannot overwrite the current modal.
+            detailAbortRef.current?.abort();
+            const controller = new AbortController();
+            detailAbortRef.current = controller;
             setDetailFor(id);
             setDetail(undefined);
             setDetailLoading(true);
             try {
-                const data = await fetchUpdateDetail(baseUrl, id, fImpl);
+                const data = await fetchUpdateDetail(baseUrl, id, fImpl, controller.signal);
+                if (controller.signal.aborted) return;
                 setDetail(data);
             } catch (e) {
+                if (controller.signal.aborted || (e as { name?: string }).name === "AbortError") return;
                 setDetail({ error: e instanceof Error ? e.message : String(e) });
             } finally {
-                setDetailLoading(false);
+                if (!controller.signal.aborted) setDetailLoading(false);
             }
         },
         [baseUrl, fImpl],
     );
 
     const closeDetail = useCallback(() => {
+        detailAbortRef.current?.abort();
         setDetailFor(undefined);
         setDetail(undefined);
     }, []);
@@ -262,14 +347,24 @@ export function UpdatesPanelView({
         setRegisterError(undefined);
         try {
             await registerUpdate(baseUrl, parsed, fImpl);
+            if (!mountedRef.current) return;
             setRegisterOpen(false);
             await refresh();
         } catch (e) {
-            setRegisterError(e instanceof Error ? e.message : String(e));
+            if (!mountedRef.current) return;
+            const { message, notAvailable } = describeUpdatesError(e);
+            if (notAvailable) setNotAvailable(true);
+            setRegisterError(message);
         } finally {
-            setRegisterBusy(false);
+            if (mountedRef.current) setRegisterBusy(false);
         }
     }, [baseUrl, fImpl, refresh, registerJson]);
+
+    const registerDialogRef = useDialogA11y(registerOpen, () => {
+        if (!registerBusy) setRegisterOpen(false);
+    });
+    const detailDialogRef = useDialogA11y(detailFor !== undefined, closeDetail);
+    const confirmDialogRef = useDialogA11y(confirmDelete !== undefined, () => setConfirmDelete(undefined));
 
     const sorted = useMemo(() => [...entries].sort((a, b) => a.id.localeCompare(b.id)), [entries]);
 
@@ -314,6 +409,11 @@ export function UpdatesPanelView({
                     {error}
                 </div>
             )}
+            {actionError && (
+                <div style={S.errorBox(theme)} role="alert">
+                    {actionError}
+                </div>
+            )}
 
             {!notAvailable && sorted.length === 0 && !error && (
                 <div style={S.emptyState(theme)}>No updates registered.</div>
@@ -321,11 +421,16 @@ export function UpdatesPanelView({
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                 {sorted.map((entry) => {
-                    // Gateway returns 404 on /status until the first
-                    // operation runs, so map "no status" to a friendlier
-                    // "Ready" badge (== ready to be prepared/executed).
-                    const statusLabel = entry.status?.status ?? "Ready";
-                    const sColor = statusColor(entry.status?.status, theme);
+                    // A carried error (non-404 /status failure) shows a
+                    // distinct "Error" badge so it is not masked as healthy.
+                    // Otherwise the gateway returns 404 on /status until the
+                    // first operation runs, so "no status" maps to a
+                    // friendlier "Ready" badge (== ready to prepare/execute).
+                    const hasError = entry.error !== undefined;
+                    const statusLabel = hasError ? "Error" : entry.status?.status ?? "Ready";
+                    const sColor = hasError
+                        ? S.colors(theme).critical
+                        : statusColor(entry.status?.status, theme);
                     const actions = actionsForStatus(entry.status?.status);
                     const isBusy = busyIds.has(entry.id);
                     return (
@@ -353,14 +458,18 @@ export function UpdatesPanelView({
                                 >
                                     {entry.id}
                                 </span>
-                                <span style={S.badge("#fff", sColor)}>{statusLabel}</span>
+                                <span style={S.badge(readableTextOn(sColor), sColor)} title={entry.error}>
+                                    {statusLabel}
+                                </span>
                             </div>
                             {entry.status?.progress !== undefined && (
                                 <div
                                     role="progressbar"
+                                    aria-label={`Progress for ${entry.id}`}
                                     aria-valuenow={entry.status.progress}
                                     aria-valuemin={0}
                                     aria-valuemax={100}
+                                    aria-valuetext={`${Math.min(100, Math.max(0, entry.status.progress))}%`}
                                     style={{
                                         height: 4,
                                         background: c.bgAlt,
@@ -393,16 +502,24 @@ export function UpdatesPanelView({
                                 >
                                     Details
                                 </button>
-                                {actions.map((action) => (
-                                    <button
-                                        key={action}
-                                        style={S.btn(theme, action === "delete" ? "danger" : "primary")}
-                                        disabled={isBusy}
-                                        onClick={() => void runAction(entry.id, action)}
-                                    >
-                                        {ACTION_LABEL[action]}
-                                    </button>
-                                ))}
+                                {actions.map((action) => {
+                                    const reason = actionDisabledReason(action, entry.status?.status);
+                                    return (
+                                        <button
+                                            key={action}
+                                            style={S.btn(theme, action === "delete" ? "danger" : "primary")}
+                                            disabled={isBusy || reason !== undefined}
+                                            title={reason}
+                                            onClick={() =>
+                                                action === "delete"
+                                                    ? setConfirmDelete(entry.id)
+                                                    : void runAction(entry.id, action)
+                                            }
+                                        >
+                                            {ACTION_LABEL[action]}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </li>
                     );
@@ -412,11 +529,17 @@ export function UpdatesPanelView({
             {registerOpen && (
                 <div
                     role="dialog"
+                    aria-modal="true"
                     aria-label="Register update"
                     style={modalBackdrop}
                     onClick={() => !registerBusy && setRegisterOpen(false)}
                 >
-                    <div style={modalCard(theme)} onClick={(e) => e.stopPropagation()}>
+                    <div
+                        ref={registerDialogRef}
+                        tabIndex={-1}
+                        style={modalCard(theme)}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div
                             style={{
                                 display: "flex",
@@ -445,6 +568,7 @@ export function UpdatesPanelView({
                             onChange={(e) => setRegisterJson(e.target.value)}
                             disabled={registerBusy}
                             spellCheck={false}
+                            aria-label="Update registration JSON"
                             style={{
                                 ...S.input(theme),
                                 width: "100%",
@@ -489,11 +613,17 @@ export function UpdatesPanelView({
             {detailFor && (
                 <div
                     role="dialog"
+                    aria-modal="true"
                     aria-label="Update details"
                     style={modalBackdrop}
                     onClick={closeDetail}
                 >
-                    <div style={modalCard(theme)} onClick={(e) => e.stopPropagation()}>
+                    <div
+                        ref={detailDialogRef}
+                        tabIndex={-1}
+                        style={modalCard(theme)}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div
                             style={{
                                 display: "flex",
@@ -538,6 +668,64 @@ export function UpdatesPanelView({
                                 {JSON.stringify(detail, null, 2)}
                             </pre>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {confirmDelete !== undefined && (
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Confirm delete update"
+                    style={modalBackdrop}
+                    onClick={() => setConfirmDelete(undefined)}
+                >
+                    <div
+                        ref={confirmDialogRef}
+                        tabIndex={-1}
+                        style={{ ...modalCard(theme), maxWidth: 440 }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <strong style={{ display: "block", marginBottom: 8 }}>Delete update</strong>
+                        <p style={{ fontSize: 12, color: c.text, margin: "0 0 4px" }}>
+                            Permanently remove this update package from the gateway? This cannot be undone.
+                        </p>
+                        <p
+                            title={confirmDelete}
+                            style={{
+                                fontFamily: "ui-monospace, monospace",
+                                fontSize: 12,
+                                color: c.textMuted,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                margin: "0 0 8px",
+                            }}
+                        >
+                            {confirmDelete}
+                        </p>
+                        <div
+                            style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                justifyContent: "flex-end",
+                                gap: 6,
+                            }}
+                        >
+                            <button style={S.btn(theme, "ghost")} onClick={() => setConfirmDelete(undefined)}>
+                                Cancel
+                            </button>
+                            <button
+                                style={S.btn(theme, "danger")}
+                                onClick={() => {
+                                    const id = confirmDelete;
+                                    setConfirmDelete(undefined);
+                                    if (id !== undefined) void runAction(id, "delete");
+                                }}
+                            >
+                                Delete
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
