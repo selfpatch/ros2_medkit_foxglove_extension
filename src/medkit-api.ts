@@ -27,10 +27,20 @@ import type {
 
 import { createGatewayClient, MedkitApiError } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
+import { isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
+import type { MedkitError } from "@selfpatch/ros2-medkit-client-ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Wrap an openapi-fetch error value (GenericError schema or MedkitError at runtime) into a thrown Error. */
+function throwApiError(error: unknown): never {
+  if (isMedkitError(error)) throw new MedkitApiError(error as MedkitError);
+  throw new Error(typeof error === "object" && error !== null && "message" in error
+    ? String((error as { message: unknown }).message)
+    : JSON.stringify(error));
+}
 
 function normalizeUrl(url: string): string {
   let u = url.trim();
@@ -95,7 +105,7 @@ export class MedkitApiClient {
 
   async ping(): Promise<boolean> {
     try {
-      const { error } = await this.client.GET("/health" as never);
+      const { error } = await this.client.GET("/health");
       return !error;
     } catch {
       return false;
@@ -103,16 +113,16 @@ export class MedkitApiClient {
   }
 
   async getVersionInfo(): Promise<VersionInfo> {
-    const { data, error } = await this.client.GET("/version-info" as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const { data, error } = await this.client.GET("/version-info");
+    if (error) throwApiError(error);
     return data as unknown as VersionInfo;
   }
 
   // ── Entity tree ───────────────────────────────────────────────────
 
   async listAreas(): Promise<SovdEntity[]> {
-    const { data, error } = await this.client.GET("/areas" as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const { data, error } = await this.client.GET("/areas");
+    if (error) throwApiError(error);
     const raw = data as unknown;
     const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).areas ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string }>;
     return items.map((a) => ({
@@ -129,8 +139,8 @@ export class MedkitApiClient {
    * but still exposes the host machine as a single Component (id = hostname,
    * via HostInfoProvider); it does NOT synthesize per-namespace components. */
   async listComponents(): Promise<SovdEntity[]> {
-    const { data, error } = await this.client.GET("/components" as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const { data, error } = await this.client.GET("/components");
+    if (error) throwApiError(error);
     const raw = data as unknown;
     const items = (Array.isArray(raw)
       ? raw
@@ -157,10 +167,10 @@ export class MedkitApiClient {
   }
 
   async listAreaComponents(areaId: string): Promise<SovdEntity[]> {
-    const { data, error } = await this.client.GET("/areas/{area_id}/components" as never, {
+    const { data, error } = await this.client.GET("/areas/{area_id}/components", {
       params: { path: { area_id: areaId } },
-    } as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    });
+    if (error) throwApiError(error);
     const raw = data as unknown;
     const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).components ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string; fqn?: string }>;
     return items.map((c) => ({
@@ -179,10 +189,10 @@ export class MedkitApiClient {
       href?: string;
       "x-medkit"?: { ros2?: { node?: string }; component_id?: string };
     }
-    const { data, error } = await this.client.GET("/components/{component_id}/hosts" as never, {
+    const { data, error } = await this.client.GET("/components/{component_id}/hosts", {
       params: { path: { component_id: componentId } },
-    } as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    });
+    if (error) throwApiError(error);
     const items = unwrapItems<ApiApp>(data as unknown);
     return items.map((item) => {
       const nodePath = item["x-medkit"]?.ros2?.node || `/${item.name}`;
@@ -202,8 +212,8 @@ export class MedkitApiClient {
   }
 
   async listFunctions(): Promise<SovdEntity[]> {
-    const { data, error } = await this.client.GET("/functions" as never);
-    if (error) throw error instanceof Error ? error : new MedkitApiError(error as never);
+    const { data, error } = await this.client.GET("/functions");
+    if (error) throwApiError(error);
     const items = unwrapItems<{ id: string; name: string; description?: string }>(data as unknown);
     return items.map((f) => ({
       id: f.id,
