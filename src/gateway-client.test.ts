@@ -23,7 +23,7 @@ describe("createGatewayClient", () => {
         }));
 
         const client = createGatewayClient(CONN, { fetch: fakeFetch as typeof fetch });
-        await client.GET("/apps" as never, {});
+        await client.GET("/apps");
 
         expect(fakeFetch).toHaveBeenCalledOnce();
         // openapi-fetch passes a Request object as the first argument

@@ -41,6 +41,6 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "@selfpatch/ros2-medkit-client-ts": "^0.1.1"
+    "@selfpatch/ros2-medkit-client-ts": "^0.5.0"
   }
 }
