@@ -123,21 +123,25 @@ export class MedkitApiClient {
     const items = (Array.isArray(raw)
       ? raw
       : ((raw as Record<string, unknown>).items ?? [])) as Array<{
-        id: string;
+        id?: unknown;
         name?: string;
         description?: string;
       }>;
-    return items.map((c) => ({
-      id: c.id,
-      // The host Component often comes back with name == id (a
-      // hostname-derived hash like 'e9e6f682e4bf'). Use the description as
-      // a friendlier label when present, else fall back to the id - the
-      // list response is not guaranteed to carry a description.
-      name: c.name && c.name !== c.id ? c.name : c.description || c.id,
-      type: "component",
-      href: `/components/${c.id}`,
-      hasChildren: true,
-    }));
+    return items
+      // Drop items without a string id, otherwise id:undefined produces a
+      // bogus "/components/undefined" request when the node is expanded.
+      .filter((c): c is { id: string; name?: string; description?: string } => typeof c.id === "string")
+      .map((c) => ({
+        id: c.id,
+        // The host Component often comes back with name == id (a
+        // hostname-derived hash like 'e9e6f682e4bf'). Use the description as
+        // a friendlier label when present, else fall back to the id - the
+        // list response is not guaranteed to carry a description.
+        name: c.name && c.name !== c.id ? c.name : c.description || c.id,
+        type: "component",
+        href: `/components/${c.id}`,
+        hasChildren: true,
+      }));
   }
 
   async listAreaComponents(areaId: string): Promise<SovdEntity[]> {

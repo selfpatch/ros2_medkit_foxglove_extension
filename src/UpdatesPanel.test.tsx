@@ -11,7 +11,7 @@ const BASE = "http://gw/api/v1";
 interface FakeRoute {
     method: "GET" | "PUT" | "DELETE" | "POST";
     pathSuffix: string;
-    response: () => Response;
+    response: () => Response | Promise<Response>;
 }
 
 function buildFetch(routes: FakeRoute[]): typeof fetch {
@@ -253,5 +253,88 @@ describe("UpdatesPanelView", () => {
         await user.click(within(dialog).getByRole("button", { name: /^register$/i }));
         expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
         expect(postCall).not.toHaveBeenCalled();
+    });
+
+    it("does not POST twice when Register is double-clicked", async () => {
+        let releasePost: (r: Response) => void = () => {};
+        const postCall = vi.fn(
+            () => new Promise<Response>((res) => (releasePost = res)),
+        );
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: [] }) },
+            { method: "POST", pathSuffix: "/updates", response: postCall },
+        ]);
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await user.click(screen.getByRole("button", { name: /^register$/i }));
+        const dialog = await screen.findByRole("dialog", { name: /register update/i });
+        // Default template is valid; both clicks land while the POST hangs.
+        const submit = within(dialog).getByRole("button", { name: /^register$/i });
+        await user.click(submit);
+        await user.click(submit);
+        expect(postCall).toHaveBeenCalledTimes(1);
+        releasePost(new Response(null, { status: 201 }));
+    });
+
+    it("discards a stale refresh response so the latest result wins", async () => {
+        let releaseFirst: (r: Response) => void = () => {};
+        let listCall = 0;
+        const f = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/updates")) {
+                listCall += 1;
+                if (listCall === 1) return new Promise<Response>((res) => (releaseFirst = res));
+                return jsonResponse({ items: ["new1"] });
+            }
+            return jsonResponse({ status: "completed", progress: 100 });
+        }) as unknown as typeof fetch;
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        // Initial load (call 1) hangs; a manual Refresh (call 2) returns first.
+        await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+        await waitFor(() => expect(screen.getByText("new1")).toBeInTheDocument());
+        // Releasing the stale first response must not overwrite the latest.
+        releaseFirst(jsonResponse({ items: ["stale0"] }));
+        await new Promise((r) => setTimeout(r, 10));
+        expect(screen.queryByText("stale0")).not.toBeInTheDocument();
+        expect(screen.getByText("new1")).toBeInTheDocument();
+    });
+
+    it("caps concurrent /status requests at 5", async () => {
+        const ids = Array.from({ length: 12 }, (_, i) => `u${i}`);
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const f = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/updates")) return jsonResponse({ items: ids });
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise((r) => setTimeout(r, 5));
+            inFlight -= 1;
+            return jsonResponse({ status: "pending" });
+        }) as unknown as typeof fetch;
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => expect(screen.getByText("u0")).toBeInTheDocument());
+        expect(maxInFlight).toBeLessThanOrEqual(5);
+    });
+
+    it("does not re-poll /status for a terminal (completed) update", async () => {
+        const statusCalls = vi.fn();
+        const f = vi.fn(async (input: RequestInfo | URL) => {
+            const url = input.toString();
+            if (url.endsWith("/updates")) return jsonResponse({ items: ["u1"] });
+            if (url.endsWith("/u1/status")) {
+                statusCalls();
+                return jsonResponse({ status: "completed", progress: 100 });
+            }
+            return new Response("nf", { status: 404 });
+        }) as unknown as typeof fetch;
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
+        expect(statusCalls).toHaveBeenCalledTimes(1);
+        await user.click(screen.getByRole("button", { name: /^refresh$/i }));
+        await waitFor(() => screen.getByText("completed"));
+        expect(statusCalls).toHaveBeenCalledTimes(1);
     });
 });

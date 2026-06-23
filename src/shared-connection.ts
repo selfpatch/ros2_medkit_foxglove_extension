@@ -24,7 +24,11 @@ export const DEFAULT_CONNECTION: GatewayConnection = {
 function readStorage(): Partial<GatewayConnection> {
     if (typeof localStorage === "undefined") return {};
     return {
-        gatewayUrl: localStorage.getItem(KEY_GATEWAY_URL) ?? undefined,
+        // Treat a blank stored gatewayUrl as absent (getItem returns "" after
+        // the user clears the field). Otherwise the empty string is sticky and
+        // would resolve to a relative URL instead of falling back to a default.
+        gatewayUrl: localStorage.getItem(KEY_GATEWAY_URL) || undefined,
+        // A blank basePath is a valid config (gateway served at the root).
         basePath: localStorage.getItem(KEY_BASE_PATH) ?? undefined,
     };
 }
