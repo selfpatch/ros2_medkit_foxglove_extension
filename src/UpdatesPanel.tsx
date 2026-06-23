@@ -264,6 +264,8 @@ export function UpdatesPanelView({
     // Synchronous double-submit guard: busyIds commits asynchronously, so two
     // fast clicks can both pass it before React re-renders.
     const inFlightRef = useRef<Set<string>>(new Set());
+    // Same guard for the single Register submit (registerBusy commits async).
+    const registerInFlightRef = useRef(false);
     // Mirror of entries so the loader can read prior statuses (to skip
     // re-polling terminal updates) without being a hook dependency.
     const entriesRef = useRef<UpdateEntry[]>([]);
@@ -469,6 +471,8 @@ export function UpdatesPanelView({
     }, []);
 
     const submitRegister = useCallback(async () => {
+        // Block a second submit dispatched before registerBusy commits.
+        if (registerInFlightRef.current) return;
         let parsed: Record<string, unknown>;
         try {
             parsed = JSON.parse(registerJson);
@@ -481,6 +485,7 @@ export function UpdatesPanelView({
             setRegisterError(validationError);
             return;
         }
+        registerInFlightRef.current = true;
         setRegisterBusy(true);
         setRegisterError(undefined);
         const controller = new AbortController();
@@ -497,6 +502,7 @@ export function UpdatesPanelView({
             if (notAvailable) setNotAvailable(true);
             setRegisterError(message);
         } finally {
+            registerInFlightRef.current = false;
             actionControllersRef.current.delete(controller);
             if (mountedRef.current) setRegisterBusy(false);
         }

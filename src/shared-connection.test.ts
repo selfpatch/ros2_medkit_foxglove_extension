@@ -73,4 +73,12 @@ describe("shared-connection", () => {
             "https://gw:8443/api/v1",
         );
     });
+
+    it("treats a blank stored gatewayUrl as absent and falls back", () => {
+        localStorage.setItem("selfpatch.gatewayUrl", "");
+        expect(loadSharedConnection({ gatewayUrl: "http://override:9000" }).gatewayUrl).toBe(
+            "http://override:9000",
+        );
+        expect(loadSharedConnection().gatewayUrl).toBe(DEFAULT_CONNECTION.gatewayUrl);
+    });
 });
