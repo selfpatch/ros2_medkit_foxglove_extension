@@ -8,7 +8,7 @@ Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gate
 |-------|-------------|
 | **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. Invoke service/action operations and edit ROS 2 parameters inline. |
 | **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
-| **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages, and run Prepare / Execute / Automated / Delete with live status polling and per-update progress. Prepare/Execute/Automated are disabled on completed/failed updates; Delete asks for confirmation. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
+| **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages (with client-side validation) and run Prepare, Execute, Prepare & execute, or Delete with live status polling and per-update progress. Delete, Execute, and Prepare & execute require confirmation; Prepare/Execute/Prepare & execute are disabled on completed/failed updates. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
 
 ## Prerequisites
 

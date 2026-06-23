@@ -7,6 +7,9 @@
   "version": "0.0.1",
   "license": "Apache-2.0",
   "main": "./dist/extension.js",
+  "engines": {
+    "node": ">=20.11.0"
+  },
   "keywords": [
     "medkit",
     "ros2",

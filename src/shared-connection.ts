@@ -68,9 +68,13 @@ export function onSharedConnectionChange(handler: (conn: GatewayConnection) => v
     };
 }
 
-/** Compose the full base URL the SOVD client expects (e.g. http://gw:8080/api/v1). */
+/** Compose the full base URL the SOVD client expects (e.g. http://gw:8080/api/v1).
+ * Normalizes like MedkitApiClient: trims, strips trailing slashes, and adds an
+ * `http://` scheme when the user enters a bare host (e.g. `localhost:8080`), so
+ * the Updates panel (which fetches this string directly) gets a valid URL. */
 export function joinConnection(conn: GatewayConnection): string {
-    const url = conn.gatewayUrl.replace(/\/$/, "");
-    const path = conn.basePath.replace(/^\/|\/$/g, "");
+    let url = conn.gatewayUrl.trim().replace(/\/+$/, "");
+    if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
+    const path = conn.basePath.trim().replace(/^\/+|\/+$/g, "");
     return path ? `${url}/${path}` : url;
 }

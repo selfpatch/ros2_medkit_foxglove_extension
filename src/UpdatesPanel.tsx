@@ -35,6 +35,65 @@ import type { Theme } from "./styles";
 
 const IDLE_INTERVAL_MS = 5000;
 const ACTIVE_INTERVAL_MS = 2000;
+const MAX_INTERVAL_MS = 30000;
+// Cap on concurrent /status requests per poll so a large catalog does not
+// fan out an unbounded burst at the gateway.
+const STATUS_CONCURRENCY = 5;
+
+// Map over items running at most `limit` tasks concurrently, preserving order.
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+        for (let i = cursor++; i < items.length; i = cursor++) {
+            results[i] = await fn(items[i]);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
+// Structural validation of a Register body against the SOVD UpdatePackage
+// shape, so an obviously-malformed package is rejected client-side with a
+// clear message instead of a raw gateway error after POST.
+function validateUpdatePackage(meta: unknown): string | undefined {
+    if (typeof meta !== "object" || meta === null || Array.isArray(meta)) {
+        return "Body must be a JSON object.";
+    }
+    const m = meta as Record<string, unknown>;
+    if (typeof m.id !== "string" || m.id.trim() === "") {
+        return "`id` is required and must be a non-empty string.";
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(m.id)) {
+        return "`id` may only contain letters, digits, underscores and hyphens.";
+    }
+    if (typeof m.update_name !== "string" || m.update_name.trim() === "") {
+        return "`update_name` is required and must be a non-empty string.";
+    }
+    const kinds = ["updated_components", "added_components", "removed_components"] as const;
+    const present = kinds.filter((k) => m[k] !== undefined);
+    if (present.length !== 1) {
+        return "Provide exactly one of updated_components / added_components / removed_components.";
+    }
+    const arr = m[present[0]];
+    if (!Array.isArray(arr) || arr.length === 0 || !arr.every((x) => typeof x === "string")) {
+        return `\`${present[0]}\` must be a non-empty array of strings.`;
+    }
+    if (m.automated !== undefined && typeof m.automated !== "boolean") {
+        return "`automated` must be a boolean.";
+    }
+    if (
+        m.origins !== undefined &&
+        (!Array.isArray(m.origins) || !m.origins.every((x) => typeof x === "string"))
+    ) {
+        return "`origins` must be an array of strings.";
+    }
+    return undefined;
+}
 
 interface UpdateEntry {
     id: string;
@@ -99,8 +158,30 @@ function actionDisabledReason(action: string, status: string | undefined): strin
 const ACTION_LABEL: Record<string, string> = {
     prepare: "Prepare",
     execute: "Execute",
-    automated: "Automated",
+    automated: "Prepare & execute",
     delete: "Delete",
+};
+
+// Destructive / state-mutating actions that require an explicit confirmation
+// dialog. Prepare only stages an artifact, so it is not confirmed.
+const CONFIRM_ACTIONS = new Set(["delete", "execute", "automated"]);
+
+const CONFIRM_COPY: Record<string, { title: string; body: string; cta: string }> = {
+    delete: {
+        title: "Delete update",
+        body: "Permanently remove this update package from the gateway? This cannot be undone.",
+        cta: "Delete",
+    },
+    execute: {
+        title: "Execute update",
+        body: "Execute this update now? It will be applied to a running system.",
+        cta: "Execute",
+    },
+    automated: {
+        title: "Prepare & execute update",
+        body: "Prepare and execute this update in one step? It will be applied to a running system with no manual checkpoint between prepare and execute.",
+        cta: "Prepare & execute",
+    },
 };
 
 // Friendly message + 501 detection shared by the action/register handlers
@@ -166,7 +247,8 @@ export function UpdatesPanelView({
     const [actionError, setActionError] = useState<string | undefined>();
     const [notAvailable, setNotAvailable] = useState(false);
     const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
-    const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
+    const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+    const [confirmAction, setConfirmAction] = useState<{ id: string; action: string } | undefined>();
     const [detailFor, setDetailFor] = useState<string | undefined>();
     const [detail, setDetail] = useState<Record<string, unknown> | undefined>();
     const [detailLoading, setDetailLoading] = useState(false);
@@ -174,72 +256,114 @@ export function UpdatesPanelView({
     const [registerJson, setRegisterJson] = useState<string>("");
     const [registerError, setRegisterError] = useState<string | undefined>();
     const [registerBusy, setRegisterBusy] = useState(false);
-    const abortRef = useRef<AbortController | null>(null);
+    const pollAbortRef = useRef<AbortController | null>(null);
     const detailAbortRef = useRef<AbortController | null>(null);
+    // Controllers for in-flight user actions, kept separate from polling so
+    // an action's terminal refresh and a poll tick never abort each other.
+    const actionControllersRef = useRef<Set<AbortController>>(new Set());
+    // Synchronous double-submit guard: busyIds commits asynchronously, so two
+    // fast clicks can both pass it before React re-renders.
+    const inFlightRef = useRef<Set<string>>(new Set());
+    // Mirror of entries so the loader can read prior statuses (to skip
+    // re-polling terminal updates) without being a hook dependency.
+    const entriesRef = useRef<UpdateEntry[]>([]);
+    useEffect(() => {
+        entriesRef.current = entries;
+    }, [entries]);
+    // Monotonic sequence so only the most recently issued load applies its
+    // result, regardless of which controller (poll vs action) it used.
+    const seqRef = useRef(0);
     const mountedRef = useRef(true);
     useEffect(() => {
         mountedRef.current = true;
         return () => {
             mountedRef.current = false;
+            pollAbortRef.current?.abort();
             detailAbortRef.current?.abort();
+            for (const ctrl of actionControllersRef.current) ctrl.abort();
         };
     }, []);
     const fImpl = fetchImpl ?? fetch;
 
-    const refresh = useCallback(async () => {
-        abortRef.current?.abort();
-        const controller = new AbortController();
-        abortRef.current = controller;
-        try {
-            const ids = await fetchUpdateIds(baseUrl, fImpl, controller.signal);
-            if (controller.signal.aborted) return;
-            const next: UpdateEntry[] = await Promise.all(
-                ids.map(async (id): Promise<UpdateEntry> => {
-                    try {
-                        const status = await fetchUpdateStatus(baseUrl, id, fImpl, controller.signal);
-                        return { id, status };
-                    } catch (e) {
-                        // 404 = no status until the first operation runs
-                        // (benign -> "Ready"); AbortError = this refresh was
-                        // superseded and is discarded below. Any other error
-                        // (500/network) is carried so it is not masked as
-                        // "Ready".
-                        if (
-                            (e as { name?: string }).name === "AbortError" ||
-                            (e instanceof UpdatesApiError && e.status === 404)
-                        ) {
-                            return { id, status: null };
+    // Core loader: list ids, fetch per-id status with capped concurrency
+    // (skipping terminal updates), then apply the result iff this is still
+    // the latest issued load.
+    const loadEntries = useCallback(
+        async (signal: AbortSignal) => {
+            const mySeq = ++seqRef.current;
+            try {
+                const ids = await fetchUpdateIds(baseUrl, fImpl, signal);
+                if (signal.aborted || mySeq !== seqRef.current) return;
+                const prior = new Map(entriesRef.current.map((e) => [e.id, e] as const));
+                const next = await mapWithConcurrency(
+                    ids,
+                    STATUS_CONCURRENCY,
+                    async (id): Promise<UpdateEntry> => {
+                        // Terminal updates never change again, so reuse the
+                        // last status instead of re-polling every tick.
+                        const p = prior.get(id);
+                        if (p && (p.status?.status === "completed" || p.status?.status === "failed")) {
+                            return { id, status: p.status };
                         }
-                        return { id, status: null, error: e instanceof Error ? e.message : String(e) };
-                    }
-                }),
-            );
-            if (controller.signal.aborted) return;
-            setEntries(next);
-            setError(undefined);
-            setNotAvailable(false);
-        } catch (e) {
-            if ((e as { name?: string }).name === "AbortError") return;
-            if (e instanceof UpdatesApiError && e.status === 501) {
-                setNotAvailable(true);
-                setEntries([]);
+                        try {
+                            const status = await fetchUpdateStatus(baseUrl, id, fImpl, signal);
+                            return { id, status };
+                        } catch (e) {
+                            // 404 = no status until the first operation runs
+                            // (benign -> "Ready"); AbortError = superseded. Any
+                            // other error is carried so it is not masked as
+                            // "Ready".
+                            if (
+                                (e as { name?: string }).name === "AbortError" ||
+                                (e instanceof UpdatesApiError && e.status === 404)
+                            ) {
+                                return { id, status: null };
+                            }
+                            return { id, status: null, error: e instanceof Error ? e.message : String(e) };
+                        }
+                    },
+                );
+                if (signal.aborted || mySeq !== seqRef.current) return;
+                setEntries(next);
                 setError(undefined);
-            } else {
                 setNotAvailable(false);
-                setError(e instanceof Error ? e.message : String(e));
+                setConsecutiveErrors(0);
+            } catch (e) {
+                if (signal.aborted || (e as { name?: string }).name === "AbortError") return;
+                if (mySeq !== seqRef.current) return;
+                if (e instanceof UpdatesApiError && e.status === 501) {
+                    setNotAvailable(true);
+                    setEntries([]);
+                    setError(undefined);
+                } else {
+                    setNotAvailable(false);
+                    setError(e instanceof Error ? e.message : String(e));
+                }
+                setConsecutiveErrors((n) => n + 1);
             }
-        }
-    }, [baseUrl, fImpl]);
+        },
+        [baseUrl, fImpl],
+    );
 
-    // Initial fetch + adaptive polling.
+    // Poll / manual refresh: owns the shared poll controller.
+    const refresh = useCallback(async () => {
+        pollAbortRef.current?.abort();
+        const controller = new AbortController();
+        pollAbortRef.current = controller;
+        await loadEntries(controller.signal);
+    }, [loadEntries]);
+
+    // Initial fetch + adaptive polling with exponential backoff on errors.
     const hasActive = entries.some(
         (e) => e.status?.status === "inProgress" || e.status?.status === "pending",
     );
-    const effectiveInterval = pollMs ?? (hasActive ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS);
+    const baseInterval = hasActive ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
+    const effectiveInterval =
+        pollMs ?? Math.min(baseInterval * 2 ** Math.min(consecutiveErrors, 4), MAX_INTERVAL_MS);
 
     useEffect(() => {
         void refresh();
-        return () => abortRef.current?.abort();
+        return () => pollAbortRef.current?.abort();
     }, [refresh]);
 
     useEffect(() => {
@@ -250,15 +374,22 @@ export function UpdatesPanelView({
 
     const runAction = useCallback(
         async (id: string, action: string) => {
+            // Synchronous double-submit guard (busyIds commits async).
+            if (inFlightRef.current.has(id)) return;
+            inFlightRef.current.add(id);
             setActionError(undefined);
             setBusyIds((prev) => new Set(prev).add(id));
+            const controller = new AbortController();
+            actionControllersRef.current.add(controller);
+            const sig = controller.signal;
             try {
-                if (action === "prepare") await triggerPrepare(baseUrl, id, undefined, fImpl);
-                else if (action === "execute") await triggerExecute(baseUrl, id, undefined, fImpl);
-                else if (action === "automated") await triggerAutomated(baseUrl, id, undefined, fImpl);
-                else if (action === "delete") await deleteUpdate(baseUrl, id, fImpl);
-                await refresh();
+                if (action === "prepare") await triggerPrepare(baseUrl, id, undefined, fImpl, sig);
+                else if (action === "execute") await triggerExecute(baseUrl, id, undefined, fImpl, sig);
+                else if (action === "automated") await triggerAutomated(baseUrl, id, undefined, fImpl, sig);
+                else if (action === "delete") await deleteUpdate(baseUrl, id, fImpl, sig);
+                await loadEntries(sig);
             } catch (e) {
+                if (sig.aborted || (e as { name?: string }).name === "AbortError") return;
                 if (!mountedRef.current) return;
                 const { message, notAvailable } = describeUpdatesError(e);
                 if (notAvailable) {
@@ -270,6 +401,8 @@ export function UpdatesPanelView({
                     setActionError(message);
                 }
             } finally {
+                actionControllersRef.current.delete(controller);
+                inFlightRef.current.delete(id);
                 if (mountedRef.current) {
                     setBusyIds((prev) => {
                         const next = new Set(prev);
@@ -279,7 +412,7 @@ export function UpdatesPanelView({
                 }
             }
         },
-        [baseUrl, fImpl, refresh],
+        [baseUrl, fImpl, loadEntries],
     );
 
     const openDetail = useCallback(
@@ -343,28 +476,37 @@ export function UpdatesPanelView({
             setRegisterError("Invalid JSON: " + (e instanceof Error ? e.message : String(e)));
             return;
         }
+        const validationError = validateUpdatePackage(parsed);
+        if (validationError) {
+            setRegisterError(validationError);
+            return;
+        }
         setRegisterBusy(true);
         setRegisterError(undefined);
+        const controller = new AbortController();
+        actionControllersRef.current.add(controller);
         try {
-            await registerUpdate(baseUrl, parsed, fImpl);
+            await registerUpdate(baseUrl, parsed, fImpl, controller.signal);
             if (!mountedRef.current) return;
             setRegisterOpen(false);
-            await refresh();
+            await loadEntries(controller.signal);
         } catch (e) {
+            if (controller.signal.aborted || (e as { name?: string }).name === "AbortError") return;
             if (!mountedRef.current) return;
             const { message, notAvailable } = describeUpdatesError(e);
             if (notAvailable) setNotAvailable(true);
             setRegisterError(message);
         } finally {
+            actionControllersRef.current.delete(controller);
             if (mountedRef.current) setRegisterBusy(false);
         }
-    }, [baseUrl, fImpl, refresh, registerJson]);
+    }, [baseUrl, fImpl, loadEntries, registerJson]);
 
     const registerDialogRef = useDialogA11y(registerOpen, () => {
         if (!registerBusy) setRegisterOpen(false);
     });
     const detailDialogRef = useDialogA11y(detailFor !== undefined, closeDetail);
-    const confirmDialogRef = useDialogA11y(confirmDelete !== undefined, () => setConfirmDelete(undefined));
+    const confirmDialogRef = useDialogA11y(confirmAction !== undefined, () => setConfirmAction(undefined));
 
     const sorted = useMemo(() => [...entries].sort((a, b) => a.id.localeCompare(b.id)), [entries]);
 
@@ -511,8 +653,8 @@ export function UpdatesPanelView({
                                             disabled={isBusy || reason !== undefined}
                                             title={reason}
                                             onClick={() =>
-                                                action === "delete"
-                                                    ? setConfirmDelete(entry.id)
+                                                CONFIRM_ACTIONS.has(action)
+                                                    ? setConfirmAction({ id: entry.id, action })
                                                     : void runAction(entry.id, action)
                                             }
                                         >
@@ -672,13 +814,13 @@ export function UpdatesPanelView({
                 </div>
             )}
 
-            {confirmDelete !== undefined && (
+            {confirmAction !== undefined && (
                 <div
                     role="dialog"
                     aria-modal="true"
-                    aria-label="Confirm delete update"
+                    aria-label={`Confirm ${confirmAction.action} update`}
                     style={modalBackdrop}
-                    onClick={() => setConfirmDelete(undefined)}
+                    onClick={() => setConfirmAction(undefined)}
                 >
                     <div
                         ref={confirmDialogRef}
@@ -686,12 +828,14 @@ export function UpdatesPanelView({
                         style={{ ...modalCard(theme), maxWidth: 440 }}
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <strong style={{ display: "block", marginBottom: 8 }}>Delete update</strong>
+                        <strong style={{ display: "block", marginBottom: 8 }}>
+                            {CONFIRM_COPY[confirmAction.action]?.title ?? "Confirm action"}
+                        </strong>
                         <p style={{ fontSize: 12, color: c.text, margin: "0 0 4px" }}>
-                            Permanently remove this update package from the gateway? This cannot be undone.
+                            {CONFIRM_COPY[confirmAction.action]?.body ?? "Proceed with this action?"}
                         </p>
                         <p
-                            title={confirmDelete}
+                            title={confirmAction.id}
                             style={{
                                 fontFamily: "ui-monospace, monospace",
                                 fontSize: 12,
@@ -702,7 +846,7 @@ export function UpdatesPanelView({
                                 margin: "0 0 8px",
                             }}
                         >
-                            {confirmDelete}
+                            {confirmAction.id}
                         </p>
                         <div
                             style={{
@@ -712,18 +856,18 @@ export function UpdatesPanelView({
                                 gap: 6,
                             }}
                         >
-                            <button style={S.btn(theme, "ghost")} onClick={() => setConfirmDelete(undefined)}>
+                            <button style={S.btn(theme, "ghost")} onClick={() => setConfirmAction(undefined)}>
                                 Cancel
                             </button>
                             <button
                                 style={S.btn(theme, "danger")}
                                 onClick={() => {
-                                    const id = confirmDelete;
-                                    setConfirmDelete(undefined);
-                                    if (id !== undefined) void runAction(id, "delete");
+                                    const pending = confirmAction;
+                                    setConfirmAction(undefined);
+                                    if (pending) void runAction(pending.id, pending.action);
                                 }}
                             >
-                                Delete
+                                {CONFIRM_COPY[confirmAction.action]?.cta ?? "Confirm"}
                             </button>
                         </div>
                     </div>

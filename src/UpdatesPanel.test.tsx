@@ -1,6 +1,6 @@
 // Copyright 2024-2026 bburda. Apache-2.0 license.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 
@@ -9,7 +9,7 @@ import { UpdatesPanelView } from "./UpdatesPanel";
 const BASE = "http://gw/api/v1";
 
 interface FakeRoute {
-    method: "GET" | "PUT" | "DELETE";
+    method: "GET" | "PUT" | "DELETE" | "POST";
     pathSuffix: string;
     response: () => Response;
 }
@@ -17,7 +17,7 @@ interface FakeRoute {
 function buildFetch(routes: FakeRoute[]): typeof fetch {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
-        const method = (init?.method ?? "GET") as "GET" | "PUT" | "DELETE";
+        const method = (init?.method ?? "GET") as "GET" | "PUT" | "DELETE" | "POST";
         const path = url.replace(BASE, "");
         for (const route of routes) {
             if (route.method === method && path === route.pathSuffix) {
@@ -85,10 +85,10 @@ describe("UpdatesPanelView", () => {
         ]);
         render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
         await waitFor(() => screen.getByText("u1"));
-        // pending -> prepare, execute, automated, delete
+        // pending -> prepare, execute, prepare & execute (automated), delete
         expect(screen.getByRole("button", { name: /^prepare$/i })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /^execute$/i })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: /^automated$/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /prepare & execute/i })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /^delete$/i })).toBeInTheDocument();
     });
 
@@ -176,7 +176,7 @@ describe("UpdatesPanelView", () => {
         await waitFor(() => screen.getByText("u1"));
         expect(screen.getByRole("button", { name: /^prepare$/i })).toBeDisabled();
         expect(screen.getByRole("button", { name: /^execute$/i })).toBeDisabled();
-        expect(screen.getByRole("button", { name: /^automated$/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /prepare & execute/i })).toBeDisabled();
         expect(screen.getByRole("button", { name: /^delete$/i })).toBeEnabled();
     });
 
@@ -213,5 +213,45 @@ describe("UpdatesPanelView", () => {
         await waitFor(() =>
             expect(screen.queryByRole("dialog", { name: /register update/i })).not.toBeInTheDocument(),
         );
+    });
+
+    it("asks for confirmation before issuing Execute", async () => {
+        const executeCall = vi.fn(() => new Response(null, { status: 202 }));
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: ["u1"] }) },
+            {
+                method: "GET",
+                pathSuffix: "/updates/u1/status",
+                response: () => jsonResponse({ status: "pending" }),
+            },
+            { method: "PUT", pathSuffix: "/updates/u1/execute", response: executeCall },
+        ]);
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await waitFor(() => screen.getByText("u1"));
+        await user.click(screen.getByRole("button", { name: /^execute$/i }));
+        const dialog = await screen.findByRole("dialog", { name: /confirm execute/i });
+        expect(executeCall).not.toHaveBeenCalled();
+        await user.click(within(dialog).getByRole("button", { name: /^execute$/i }));
+        expect(executeCall).toHaveBeenCalled();
+    });
+
+    it("blocks Register submit on an invalid package and does not POST", async () => {
+        const postCall = vi.fn(() => new Response(null, { status: 201 }));
+        const f = buildFetch([
+            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ items: [] }) },
+            { method: "POST", pathSuffix: "/updates", response: postCall },
+        ]);
+        const user = userEvent.setup();
+        render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
+        await user.click(screen.getByRole("button", { name: /^register$/i }));
+        const dialog = await screen.findByRole("dialog", { name: /register update/i });
+        // Missing update_name and a components field -> validation rejects it.
+        fireEvent.change(within(dialog).getByRole("textbox"), {
+            target: { value: JSON.stringify({ id: "x" }) },
+        });
+        await user.click(within(dialog).getByRole("button", { name: /^register$/i }));
+        expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+        expect(postCall).not.toHaveBeenCalled();
     });
 });

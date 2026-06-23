@@ -58,16 +58,20 @@ function FaultsDashboardPanel({
     context.initialState as Partial<GatewayConnection>,
   );
 
-  // Panel-specific knobs that are NOT shared.
-  const [knobs, setKnobs] = useState<PanelKnobs>(() => ({
-    ...DEFAULT_PANEL_KNOBS,
-    ...((context.initialState ?? {}) as Partial<PanelKnobs>),
-  }));
+  // Panel-specific knobs that are NOT shared. Pick only knob fields from the
+  // persisted state so stale gatewayUrl/basePath can never leak into knobs.
+  const [knobs, setKnobs] = useState<PanelKnobs>(() => {
+    const init = (context.initialState ?? {}) as Partial<PanelKnobs>;
+    return {
+      refreshIntervalSec: init.refreshIntervalSec ?? DEFAULT_PANEL_KNOBS.refreshIntervalSec,
+      enableStream: init.enableStream ?? DEFAULT_PANEL_KNOBS.enableStream,
+    };
+  });
 
-  // Memoized so the merged object's identity only changes when conn or
-  // knobs actually change; otherwise the saveState / settings-editor
-  // effects below would re-run on every render.
-  const state: PanelState = useMemo(() => ({ ...conn, ...knobs }), [conn, knobs]);
+  // Memoized so the identity only changes when conn or knobs actually change.
+  // `conn` is spread LAST so the shared connection always wins over any stale
+  // gatewayUrl/basePath that an old layout may have persisted.
+  const state: PanelState = useMemo(() => ({ ...knobs, ...conn }), [conn, knobs]);
 
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
@@ -84,9 +88,12 @@ function FaultsDashboardPanel({
 
   // ── Foxglove state persistence + settings editor ───────────────
 
+  // Persist only the panel-local knobs; the shared connection is the source
+  // of truth for gatewayUrl/basePath (don't re-persist them here, or a stale
+  // copy would override the shared value on the next mount).
   useEffect(() => {
-    context.saveState(state);
-  }, [context, state]);
+    context.saveState(knobs);
+  }, [context, knobs]);
 
   useEffect(() => {
     context.updatePanelSettingsEditor({
