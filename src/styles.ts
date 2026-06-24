@@ -128,7 +128,9 @@ export function input(theme: Theme): CSSProperties {
   };
 }
 
-export function table(theme: Theme): CSSProperties {
+// Static table styling; takes _theme only to keep the style-helper call sites
+// uniform with the themed helpers (th/td/etc.).
+export function table(_theme: Theme): CSSProperties {
   return {
     width: "100%",
     borderCollapse: "collapse" as const,
