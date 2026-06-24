@@ -263,8 +263,8 @@ export function getEntityLogs(
   // and context at runtime. Use `as unknown` on only the path-param object to
   // slip query past TypeScript without widening the path-string literal.
   const query: Record<string, string> = {};
-  if (params?.severity) query.severity = params.severity;
-  if (params?.context) query.context = params.context;
+  if (params?.severity != null) query.severity = params.severity;
+  if (params?.context != null) query.context = params.context;
   switch (entityType) {
     case "apps":
       return client.GET("/apps/{app_id}/logs", {
