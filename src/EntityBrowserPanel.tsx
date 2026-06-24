@@ -18,6 +18,7 @@ import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import { OperationsPanel } from "./OperationsPanel";
+import { LogsPanel } from "./LogsPanel";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -47,7 +48,7 @@ interface TreeNode {
   isLoading: boolean;
 }
 
-type Tab = "data" | "operations" | "configurations" | "faults";
+type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
 
 // ---------------------------------------------------------------------------
 // Panel Component
@@ -342,7 +343,7 @@ function EntityBrowserPanel({
 
             {/* Tabs */}
             <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
-              {(["data", "operations", "configurations", "faults"] as Tab[]).map((t) => (
+              {(["data", "operations", "configurations", "faults", "logs"] as Tab[]).map((t) => (
                 <button
                   key={t}
                   style={{
@@ -393,6 +394,14 @@ function EntityBrowserPanel({
                 client={client}
                 theme={theme}
                 onRefresh={() => void selectEntity(selected)}
+              />
+            )}
+            {activeTab === "logs" && client != null && (
+              <LogsPanel
+                client={client}
+                entityType={selectedType}
+                entityId={selected.id}
+                theme={theme}
               />
             )}
 
