@@ -6,7 +6,7 @@ Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gate
 
 | Panel | Description |
 |-------|-------------|
-| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its data, operations, configurations, and faults in tabbed detail view. The Operations tab builds a request/goal form from the operation schema, runs service or action operations, and for actions polls execution status with progress, cancel, and per-operation history. Edit ROS 2 parameters inline. |
+| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its data, operations, configurations, faults, and logs in tabbed detail view. The Operations tab builds a request/goal form from the operation schema, runs service or action operations, and for actions polls execution status with progress, cancel, and per-operation history. Edit ROS 2 parameters inline. The Logs tab queries entity logs with a severity filter and context search; rows are expandable to show the source location (file:line) and full timestamp; an aggregation header appears for function/area-level log aggregation; optional auto-refresh pauses automatically when the panel is not visible; a clear "no LogManager configured" state is shown when the gateway has no LogManager. |
 | **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
 | **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages (with client-side validation) and run Prepare, Execute, Prepare & execute, or Delete with live status polling and per-update progress. Delete, Execute, and Prepare & execute require confirmation; Prepare/Execute/Prepare & execute are disabled on completed/failed updates. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
 
@@ -64,6 +64,7 @@ src/
 ├── styles.ts                  # Inline style helpers (dark/light theme)
 ├── EntityBrowserPanel.tsx     # Entity tree + detail tabs
 ├── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
+├── LogsPanel.tsx              # Logs tab (severity/context filter, expandable rows, auto-refresh)
 ├── OperationRequestForm.tsx   # Schema-driven request/goal form (controlled)
 ├── OperationsPanel.tsx        # Operation request forms + execution lifecycle
 └── UpdatesPanel.tsx           # SOVD updates catalog + actions
