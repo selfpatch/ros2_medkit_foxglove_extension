@@ -70,11 +70,19 @@ export interface ComponentConfigurations {
 
 export type OperationKind = "service" | "action";
 
+export interface OperationTypeInfo {
+  /** Converted input schema for the operation (request fields for a service,
+   *  goal fields for an action). Populated from x-medkit.type_info via
+   *  convertJsonSchemaToTopicSchema; absent when the gateway omits type_info. */
+  schema?: Record<string, unknown>;
+}
+
 export interface Operation {
   name: string;
   path: string;
   type: string;
   kind: OperationKind;
+  type_info?: OperationTypeInfo;
 }
 
 export interface CreateExecutionRequest {

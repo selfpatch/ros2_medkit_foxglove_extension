@@ -2,9 +2,9 @@
 //
 // Operations tab: list operations -> pick one -> form -> Run -> show response.
 // Service vs action detection is via Operation.kind ("service" | "action").
-// The local Operation type carries no type_info schema; the form therefore
-// renders with an empty TopicSchema (no fields) and the user invokes
-// without parameters (matching web_ui "no params" path).
+// Operation.type_info.schema carries the gateway's input schema (request for
+// services, goal for actions); the form renders real fields when present, or
+// "No parameters" when the operation has no inputs.
 
 import { type ReactElement, useCallback, useEffect, useState } from "react";
 
@@ -161,6 +161,7 @@ export function OperationsPanel({
     setResponse(null);
     setRunError(undefined);
     setLoadError(undefined);
+    setOperations([]);
     setLoading(true);
 
     let cancelled = false;
@@ -183,16 +184,15 @@ export function OperationsPanel({
     };
   }, [client, entityType, entityId]);
 
-  // When an operation is selected, derive the schema from its type_info
-  // (the local Operation type carries no schema; convertJsonSchemaToTopicSchema
-  // returns undefined for undefined, yielding an empty form).
+  // When an operation is selected, derive the schema from its type_info.schema.
+  // For services this is the request schema; for actions the goal schema.
+  // Falls back to an empty schema when type_info is absent (no parameters).
   const handleSelectOp = useCallback((op: Operation) => {
     setSelectedOp(op);
     setResponse(null);
     setRunError(undefined);
 
-    // Operation type in this extension has no type_info.schema; treat as empty.
-    const derivedSchema = convertJsonSchemaToTopicSchema(undefined) ?? {};
+    const derivedSchema = convertJsonSchemaToTopicSchema(op.type_info?.schema) ?? {};
     setSchema(derivedSchema);
     setFormValue(getSchemaDefaults(derivedSchema));
   }, []);

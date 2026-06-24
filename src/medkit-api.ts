@@ -28,6 +28,7 @@ import type {
 import { createGatewayClient, MedkitApiError, isMedkitError, normalizeBaseUrl } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
 import { joinConnection } from "./shared-connection";
+import { convertJsonSchemaToTopicSchema } from "./schema-utils";
 import {
   getEntityData,
   getEntityDataItem,
@@ -314,27 +315,52 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<Operation[]> {
+    interface RawOpTypeInfo {
+      request?: unknown;
+      response?: unknown;
+      goal?: unknown;
+      result?: unknown;
+      feedback?: unknown;
+    }
     interface RawOp {
       id: string;
       name: string;
       asynchronous_execution?: boolean;
       "x-medkit"?: {
         ros2?: { kind?: "service" | "action"; service?: string; action?: string; type?: string };
+        type_info?: RawOpTypeInfo;
       };
     }
     const { data, error } = await getEntityOperations(this.client, entityType, entityId);
     if (error) throwApiError(error);
     const items = unwrapItems<RawOp>(data as unknown);
     return items.map((op) => {
-      const r = op["x-medkit"]?.ros2;
+      const xm = op["x-medkit"];
+      const r = xm?.ros2;
       let kind: "service" | "action" = "service";
       if (r?.kind) kind = r.kind;
       else if (op.asynchronous_execution) kind = "action";
+
+      // Extract input schema from x-medkit.type_info, porting web_ui transforms.ts logic.
+      // Services expose request schema; actions expose goal schema.
+      let type_info: Operation["type_info"];
+      const rawTypeInfo = xm?.type_info;
+      if (rawTypeInfo) {
+        if (kind === "service" && rawTypeInfo.request) {
+          const schema = convertJsonSchemaToTopicSchema(rawTypeInfo.request);
+          if (schema) type_info = { schema };
+        } else if (kind === "action" && rawTypeInfo.goal) {
+          const schema = convertJsonSchemaToTopicSchema(rawTypeInfo.goal);
+          if (schema) type_info = { schema };
+        }
+      }
+
       return {
         name: op.name || op.id,
         path: r?.service || r?.action || `/${op.name}`,
         type: r?.type || "",
         kind,
+        type_info,
       };
     });
   }
