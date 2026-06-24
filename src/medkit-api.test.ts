@@ -278,3 +278,50 @@ describe("MedkitApiClient.listBulkData", () => {
         expect(result).toEqual({ items: [descriptor] });
     });
 });
+
+describe("MedkitApiClient.getRoot", () => {
+    it("issues GET / and returns RootOverview", async () => {
+        const overview = {
+            name: "ros2_medkit Gateway",
+            version: "1.0.0",
+            api_base: "/api/v1",
+            endpoints: ["/api/v1/areas", "/api/v1/components"],
+            capabilities: {
+                aggregation: false,
+                async_actions: true,
+                authentication: false,
+                bulk_data: true,
+                configurations: true,
+                cyclic_subscriptions: false,
+                data_access: true,
+                discovery: true,
+                faults: true,
+                locking: false,
+                logs: true,
+                operations: true,
+                scripts: false,
+                tls: false,
+                triggers: false,
+                updates: false,
+                vendor_extensions: false,
+            },
+            auth: null,
+            tls: null,
+        };
+        stubFetch(overview);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.getRoot();
+        expect(result.name).toBe("ros2_medkit Gateway");
+        expect(result.version).toBe("1.0.0");
+        expect(result.api_base).toBe("/api/v1");
+        expect(result.endpoints).toEqual(["/api/v1/areas", "/api/v1/components"]);
+        expect(result.capabilities.async_actions).toBe(true);
+        expect(result.capabilities.aggregation).toBe(false);
+    });
+
+    it("throws on a non-2xx gateway response", async () => {
+        stubFetchError(503);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        await expect(client.getRoot()).rejects.toThrow();
+    });
+});
