@@ -11,6 +11,8 @@ import type {
   ComponentTopic,
   ComponentConfigurations,
   Parameter,
+  ConfigurationDeleteMultiStatus,
+  ConfigurationResetCounts,
   Operation,
   CreateExecutionRequest,
   CreateExecutionResponse,
@@ -152,10 +154,12 @@ export class MedkitApiClient {
     }
   }
 
-  async getRoot(): Promise<RootOverview> {
-    const { data, error } = await this.client.GET("/");
+  async getRoot(signal?: AbortSignal): Promise<RootOverview> {
+    const { data, error } = await this.client.GET("/", signal ? { signal } : undefined);
     if (error) throwApiError(error);
-    return data as unknown as RootOverview;
+    // The schema's GET / 200 body is structurally RootOverview already; a
+    // single cast aligns the generated component type with the local one.
+    return data as RootOverview;
   }
 
   async getVersionInfo(): Promise<VersionInfo> {
@@ -385,17 +389,29 @@ export class MedkitApiClient {
   async resetAllConfigurations(
     entityType: SovdResourceEntityType,
     entityId: string,
-  ): Promise<{ reset_count?: number; failed_count?: number } | void> {
+  ): Promise<ConfigurationResetCounts | undefined> {
     const { data, error } = await dispatchDeleteEntityConfigurations(
       this.client,
       entityType,
       entityId,
     );
     if (error) throwApiError(error);
+    // The real 207 body is ConfigurationDeleteMultiStatus { entity_id, results }
+    // - there are no reset_count/failed_count fields on the wire. Derive the
+    // counts from results so the panel banner reflects the actual outcome.
     if (data != null) {
-      const raw = data as unknown as { reset_count?: number; failed_count?: number };
-      if (raw.reset_count != null || raw.failed_count != null) return raw;
+      const body = data as unknown as Partial<ConfigurationDeleteMultiStatus>;
+      if (Array.isArray(body.results)) {
+        let reset_count = 0;
+        let failed_count = 0;
+        for (const r of body.results) {
+          if (r.success) reset_count++;
+          else failed_count++;
+        }
+        return { reset_count, failed_count };
+      }
     }
+    return undefined;
   }
 
   // ── Operations ────────────────────────────────────────────────────
