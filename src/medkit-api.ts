@@ -22,6 +22,7 @@ import type {
   ListFaultsResponse,
   App,
   VersionInfo,
+  RootOverview,
   FaultResponse,
   BulkDataCategory,
   BulkDataList,
@@ -128,14 +129,14 @@ export class MedkitApiClient {
   private readonly resolvedBase: string;
   private readonly client: MedkitClient;
 
-  constructor(serverUrl: string, baseEndpoint = "") {
+  constructor(serverUrl: string, baseEndpoint = "", fetchImpl?: typeof fetch) {
     const conn = { gatewayUrl: serverUrl, basePath: baseEndpoint };
     // Resolve the base URL exactly as the typed client does internally
     // (joinConnection + normalizeBaseUrl, which forces a trailing /api/v1).
     // Bulk-data download URLs are built from this same value so they cannot
     // diverge from the client's request root for a non-default basePath.
     this.resolvedBase = normalizeBaseUrl(joinConnection(conn));
-    this.client = createGatewayClient(conn);
+    this.client = createGatewayClient(conn, fetchImpl ? { fetch: fetchImpl } : undefined);
   }
 
   // ── Health ────────────────────────────────────────────────────────
@@ -149,6 +150,12 @@ export class MedkitApiClient {
     } catch {
       return false;
     }
+  }
+
+  async getRoot(): Promise<RootOverview> {
+    const { data, error } = await this.client.GET("/");
+    if (error) throwApiError(error);
+    return data as unknown as RootOverview;
   }
 
   async getVersionInfo(): Promise<VersionInfo> {
