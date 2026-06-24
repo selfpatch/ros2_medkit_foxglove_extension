@@ -14,6 +14,7 @@ import type {
   Operation,
   CreateExecutionRequest,
   CreateExecutionResponse,
+  OperationExecution,
   Fault,
   FaultSeverity,
   FaultStatus,
@@ -24,6 +25,8 @@ import type {
   BulkDataCategory,
   BulkDataList,
 } from "./types";
+
+export type { OperationExecution };
 
 import { createGatewayClient, MedkitApiError, isMedkitError, normalizeBaseUrl } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
@@ -36,6 +39,8 @@ import {
   putEntityConfiguration,
   getEntityOperations,
   postEntityExecution,
+  getExecution as dispatchGetExecution,
+  cancelExecution as dispatchCancelExecution,
   getEntityFaults,
   deleteEntityFault,
   deleteAllEntityFaults,
@@ -382,6 +387,45 @@ export class MedkitApiClient {
     // Response intentionally flattens 200 (sync result) and 202 (async created)
     // into CreateExecutionResponse - callers do not disambiguate the two branches.
     return data as unknown as CreateExecutionResponse;
+  }
+
+  async getExecution(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    operationName: string,
+    executionId: string,
+  ): Promise<OperationExecution> {
+    const { data, error } = await dispatchGetExecution(
+      this.client,
+      entityType,
+      entityId,
+      operationName,
+      executionId,
+    );
+    if (error) throwApiError(error);
+    const raw = data as unknown as { id?: string | null; status: string; parameters?: unknown | null; "x-medkit"?: { ros2_status?: string | null } | null };
+    return {
+      id: raw.id,
+      status: raw.status as OperationExecution["status"],
+      parameters: raw.parameters,
+      ros2_status: raw["x-medkit"]?.ros2_status,
+    };
+  }
+
+  async cancelExecution(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    operationName: string,
+    executionId: string,
+  ): Promise<void> {
+    const { error } = await dispatchCancelExecution(
+      this.client,
+      entityType,
+      entityId,
+      operationName,
+      executionId,
+    );
+    if (error) throwApiError(error);
   }
 
   // ── Faults ────────────────────────────────────────────────────────

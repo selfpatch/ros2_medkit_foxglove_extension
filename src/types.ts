@@ -105,6 +105,21 @@ export interface CreateExecutionResponse {
   error?: string;
 }
 
+/**
+ * Execution state polled via GET .../executions/{execution_id}.
+ *
+ * Schema fields: id?, status, capability?, parameters?, "x-medkit"?(goal_id, ros2_status).
+ * There is no distinct `feedback` field in the schema. We map:
+ *   - `parameters` as both live feedback (while running) and result (when terminal).
+ *   - `ros2_status` from x-medkit as supplemental info.
+ */
+export interface OperationExecution {
+  id?: string | null;
+  status: "pending" | "running" | "completed" | "failed";
+  parameters?: unknown | null;
+  ros2_status?: string | null;
+}
+
 // =============================================================================
 // Faults
 // =============================================================================
