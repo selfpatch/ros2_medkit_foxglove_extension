@@ -353,3 +353,49 @@ export interface VersionInfo {
     vendor_info?: { name: string; version: string } | null;
   }>;
 }
+
+/**
+ * Root overview returned by GET / on the gateway.
+ * Capability flags from schema RootCapabilities; only the fields the
+ * ServerInfoPanel renders are listed here.
+ */
+export interface RootCapabilities {
+  aggregation: boolean;
+  async_actions: boolean;
+  authentication: boolean;
+  bulk_data: boolean;
+  configurations: boolean;
+  cyclic_subscriptions: boolean;
+  data_access: boolean;
+  discovery: boolean;
+  faults: boolean;
+  locking: boolean;
+  logs: boolean;
+  operations: boolean;
+  scripts: boolean;
+  tls: boolean;
+  triggers: boolean;
+  updates: boolean;
+  vendor_extensions: boolean;
+}
+
+export interface RootAuth {
+  enabled: boolean;
+  algorithm: string;
+  require_auth_for: string;
+}
+
+export interface RootTls {
+  enabled: boolean;
+  min_version: string;
+}
+
+export interface RootOverview {
+  name: string;
+  version: string;
+  api_base: string;
+  endpoints: string[];
+  capabilities: RootCapabilities;
+  auth?: RootAuth | null;
+  tls?: RootTls | null;
+}
