@@ -115,10 +115,33 @@ interface FieldRowProps {
     theme: Theme;
     children: React.ReactNode;
     typeHint?: string;
+    /**
+     * Render the label as a plain <span> instead of a <label htmlFor>. Used for
+     * the boolean toggle: its control is a role="switch" <button> whose
+     * accessible name comes from its own aria-label, so a <label htmlFor> would
+     * be redundant/inert. A <span> keeps the visual label without a broken
+     * for-association.
+     */
+    labelAsSpan?: boolean;
 }
 
-function FieldRow({ fieldId, label, depth, theme, children, typeHint }: FieldRowProps): JSX.Element {
+function FieldRow({
+    fieldId,
+    label,
+    depth,
+    theme,
+    children,
+    typeHint,
+    labelAsSpan,
+}: FieldRowProps): JSX.Element {
     const c = S.colors(theme);
+    const labelStyle: CSSProperties = {
+        minWidth: 120,
+        fontSize: 12,
+        fontWeight: 500,
+        color: c.text,
+        flexShrink: 0,
+    };
     return (
         <div
             style={{
@@ -129,18 +152,13 @@ function FieldRow({ fieldId, label, depth, theme, children, typeHint }: FieldRow
                 minHeight: 28,
             }}
         >
-            <label
-                htmlFor={fieldId}
-                style={{
-                    minWidth: 120,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: c.text,
-                    flexShrink: 0,
-                }}
-            >
-                {label}
-            </label>
+            {labelAsSpan ? (
+                <span style={labelStyle}>{label}</span>
+            ) : (
+                <label htmlFor={fieldId} style={labelStyle}>
+                    {label}
+                </label>
+            )}
             {children}
             {typeHint !== undefined && (
                 <span style={{ fontSize: 11, color: c.textMuted, flexShrink: 0 }}>{typeHint}</span>
@@ -349,7 +367,14 @@ function SchemaField({
                 minWidth: 52,
             };
             return (
-                <FieldRow fieldId={fieldId} label={name} depth={depth} theme={theme} typeHint={schema.type}>
+                <FieldRow
+                    fieldId={fieldId}
+                    label={name}
+                    depth={depth}
+                    theme={theme}
+                    typeHint={schema.type}
+                    labelAsSpan
+                >
                     <button
                         id={fieldId}
                         type="button"

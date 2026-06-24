@@ -308,13 +308,9 @@ describe("OperationsPanel - selecting an operation shows form", () => {
 });
 
 describe("OperationsPanel - action op field-render and lifecycle start", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
+  // Real timers: these tests only assert the immediate post-Run state (panel
+  // shown, Run disabled while polling) and never advance the poll clock, so
+  // waitFor works without fake timers.
   it("renders goal fields (not 'No parameters') when action op.type_info.schema has fields", async () => {
     const client = makeClient([ACTION_OP_WITH_SCHEMA], ACTION_RESPONSE);
     render(
@@ -495,7 +491,7 @@ describe("OperationsPanel - service response display", () => {
 });
 
 describe("OperationsPanel - action response display", () => {
-  it("shows the action execution panel (status badge) after run", async () => {
+  it("shows the action badge and Cancel control in the lifecycle panel after run", async () => {
     const client = makeClient([ACTION_OP], ACTION_RESPONSE);
     render(
       <OperationsPanel
@@ -509,12 +505,15 @@ describe("OperationsPanel - action response display", () => {
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    // T3: action response is now shown via ActionExecutionPanel (polling lifecycle).
-    // The panel renders an "action" badge and the execution id.
+    // T3: action response is shown via ActionExecutionPanel (polling lifecycle).
+    // Differentiated from the id test below: assert the lifecycle-panel chrome
+    // (the "action" badge inside the panel + the non-terminal Cancel control),
+    // not just the id.
     await waitFor(() => {
-      // execution id shown in the panel
-      expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
+      // Two "action" badges: one in the op list, one in the lifecycle panel.
+      expect(screen.getAllByText("action").length).toBeGreaterThanOrEqual(2);
     });
+    expect(screen.getByRole("button", { name: "Cancel execution" })).toBeInTheDocument();
   });
 
   it("shows the execution id for an action response", async () => {
@@ -551,8 +550,9 @@ describe("OperationsPanel - action response display", () => {
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
     await waitFor(() => {
-      // Status badge in response
-      const statusBadges = screen.getAllByText("accepted");
+      // The async-202 alias "accepted" is shown as "pending" in the lifecycle
+      // panel (the gateway never emits "accepted" on the executions/{id} poll).
+      const statusBadges = screen.getAllByText("pending");
       expect(statusBadges.length).toBeGreaterThanOrEqual(1);
     });
   });
@@ -627,6 +627,24 @@ describe("OperationsPanel - keyboard accessibility", () => {
     fireEvent.keyDown(opBtn, { key: "Enter" });
     expect(screen.getByRole("button", { name: `Run ${SERVICE_OP.name}` })).toBeInTheDocument();
   });
+
+  it("selects an operation on Space key and prevents default page scroll", async () => {
+    const client = makeClient([SERVICE_OP]);
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="components"
+        entityId="c1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: SERVICE_OP.name }));
+    const opBtn = screen.getByRole("button", { name: SERVICE_OP.name });
+    // fireEvent.keyDown returns false if any handler called preventDefault().
+    const notPrevented = fireEvent.keyDown(opBtn, { key: " " });
+    expect(notPrevented).toBe(false); // default (scroll) was prevented
+    expect(screen.getByRole("button", { name: `Run ${SERVICE_OP.name}` })).toBeInTheDocument();
+  });
 });
 
 // =============================================================================
@@ -657,10 +675,43 @@ function makePollingClient(
   } as unknown as MedkitApiClient & { getExecution: ReturnType<typeof vi.fn>; cancelExecution: ReturnType<typeof vi.fn> };
 }
 
+/**
+ * Drive the post-Run async flow that runs on MICROTASKS (createExecution
+ * resolving -> setActiveExecution/setPolling). With fake timers, waitFor cannot
+ * poll, so we flush microtasks inside act() until the lifecycle panel appears.
+ */
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await flushMicrotasksRaw();
+  });
+}
+
+/** Microtask flush WITHOUT its own act() wrapper (for use inside an act block). */
+async function flushMicrotasksRaw(): Promise<void> {
+  // A few rounds covers: promise resolve -> state set -> re-render.
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+/**
+ * Advance the recursive-setTimeout poll by exactly one tick and flush the
+ * getExecution microtask + the resulting state update. advanceTimersByTimeAsync
+ * runs due timers AND drains the microtask queue between them, which is what the
+ * async tick body needs.
+ */
+async function advanceOnePoll(): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL_TICK_MS);
+  });
+}
+
+// One full poll interval (the panel uses 1000ms); advancing past it fires the
+// next scheduled tick.
+const POLL_TICK_MS = 1000;
+
 describe("OperationsPanel - action polling lifecycle", () => {
   beforeEach(() => {
-    // Only fake setInterval/clearInterval; leave setTimeout real so waitFor works.
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    // Fake setTimeout/clearTimeout for the recursive-setTimeout poll loop.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -681,51 +732,39 @@ describe("OperationsPanel - action polling lifecycle", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    // listOperations resolves on a microtask, not a timer.
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    // After run, ActionExecutionPanel is shown with initial status from createExecution
-    await waitFor(() => {
-      expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
-    });
+    // After run (createExecution resolves), the panel shows the execution id and
+    // the mapped initial status "pending".
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
+    expect(screen.getByText("pending")).toBeInTheDocument();
+    expect(client.getExecution).toHaveBeenCalledTimes(0); // first poll not yet due
 
-    // Tick 1: pending
-    await act(async () => {
-      vi.advanceTimersByTime(1100);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.getByText("pending")).toBeInTheDocument();
-    });
+    // Tick 1: getExecution -> pending
+    await advanceOnePoll();
     expect(client.getExecution).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("pending")).toBeInTheDocument();
 
-    // Tick 2: running + feedback
-    await act(async () => {
-      vi.advanceTimersByTime(1100);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.getByText("running")).toBeInTheDocument();
-    });
-    expect(screen.getByText(/feedback/)).toBeInTheDocument();
+    // Tick 2: running + feedback value (assert the VALUE 42, not the key)
+    await advanceOnePoll();
+    expect(client.getExecution).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText(/"feedback":\s*42/)).toBeInTheDocument();
 
-    // Tick 3: completed (terminal)
-    await act(async () => {
-      vi.advanceTimersByTime(1100);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.getByText("completed")).toBeInTheDocument();
-    });
+    // Tick 3: completed (terminal) -> poll stops
+    await advanceOnePoll();
+    expect(client.getExecution).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("completed")).toBeInTheDocument();
 
     const callCountAtTerminal = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    // No more calls after terminal - advance more ticks
-    await act(async () => {
-      vi.advanceTimersByTime(3100);
-      await Promise.resolve();
-    });
+    // No next tick scheduled after terminal: advancing further makes no new call.
+    await advanceOnePoll();
+    await advanceOnePoll();
     expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCountAtTerminal);
   });
 
@@ -742,19 +781,15 @@ describe("OperationsPanel - action polling lifecycle", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    await waitFor(() => screen.getByText("exec-abc-123"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
 
-    await act(async () => {
-      vi.advanceTimersByTime(1100);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.getByText("completed")).toBeInTheDocument();
-    });
+    await advanceOnePoll();
+    expect(screen.getByText("completed")).toBeInTheDocument();
 
     // History toggle button should appear
     expect(screen.getByRole("button", { name: "Toggle execution history" })).toBeInTheDocument();
@@ -763,7 +798,7 @@ describe("OperationsPanel - action polling lifecycle", () => {
 
 describe("OperationsPanel - Run button disabled while polling", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -783,7 +818,7 @@ describe("OperationsPanel - Run button disabled while polling", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
 
     const runBtn = screen.getByRole("button", { name: `Run ${ACTION_OP.name}` });
@@ -792,24 +827,28 @@ describe("OperationsPanel - Run button disabled while polling", () => {
     fireEvent.click(runBtn);
 
     // After createExecution resolves, polling=true => button must be disabled
-    await waitFor(() => screen.getByText("exec-abc-123"));
+    // and labeled "Polling...".
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
     expect(runBtn).toBeDisabled();
+    expect(runBtn).toHaveTextContent("Polling...");
 
     // Tick 1: running (still non-terminal) => still disabled
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    await advanceOnePoll();
+    expect(screen.getByText("running")).toBeInTheDocument();
     expect(runBtn).toBeDisabled();
 
     // Tick 2: completed (terminal) => polling stops => re-enabled
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
+    await advanceOnePoll();
+    expect(screen.getByText("completed")).toBeInTheDocument();
     expect(runBtn).not.toBeDisabled();
+    expect(runBtn).toHaveTextContent("Run");
   });
 });
 
 describe("OperationsPanel - action cancel", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -829,53 +868,47 @@ describe("OperationsPanel - action cancel", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    await waitFor(() => screen.getByText("exec-abc-123"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
 
-    // Advance one tick so polling starts and Cancel button is visible
-    await act(async () => {
-      vi.advanceTimersByTime(1100);
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Cancel execution" })).toBeInTheDocument();
-    });
+    // Advance one tick so the poll runs once and the Cancel button is visible.
+    await advanceOnePoll();
+    expect(client.getExecution).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Cancel execution" })).toBeInTheDocument();
 
     const callsBeforeCancel = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel execution" }));
-
-    await waitFor(() => {
-      expect(client.cancelExecution).toHaveBeenCalledTimes(1);
-    });
-
-    // Advance more - no new getExecution calls
+    // Await the cancel resolution (cancelExecution + state update) BEFORE
+    // asserting the poll count is frozen, so the freeze is real, not incidental
+    // timing.
     await act(async () => {
-      vi.advanceTimersByTime(2100);
-      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel execution" }));
+      await flushMicrotasksRaw();
     });
+    expect(client.cancelExecution).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("canceled")).toBeInTheDocument();
+
+    // Advance further - no new getExecution calls (polling stopped on cancel).
+    await advanceOnePoll();
+    await advanceOnePoll();
     const callsAfterCancel = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(callsAfterCancel).toBe(callsBeforeCancel);
-
-    // Status shown as canceled
-    await waitFor(() => {
-      expect(screen.getByText("canceled")).toBeInTheDocument();
-    });
   });
 });
 
 describe("OperationsPanel - action history", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("accumulates history entries across multiple runs", async () => {
+  it("accumulates history entries across multiple runs of the same op", async () => {
     const client = makePollingClient([
       { status: "completed" },
       { status: "failed" },
@@ -896,30 +929,93 @@ describe("OperationsPanel - action history", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
 
-    // Run 1
+    // Run 1 -> completed
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
-    await waitFor(() => screen.getByText("exec-0"));
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => screen.getByText("completed"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-0")).toBeInTheDocument();
+    await advanceOnePoll();
+    expect(screen.getByText("completed")).toBeInTheDocument();
 
-    // Run 2
+    // Run 2 -> failed
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
-    await waitFor(() => screen.getByText("exec-1"));
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => screen.getByText("failed"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-1")).toBeInTheDocument();
+    await advanceOnePoll();
+    expect(screen.getByText("failed")).toBeInTheDocument();
 
-    // History should have 2 entries
+    // History should have 2 entries with the right ids + terminal statuses.
     const historyBtn = screen.getByRole("button", { name: "Toggle execution history" });
     expect(historyBtn.textContent).toContain("2");
+    fireEvent.click(historyBtn);
+    // exec-0 appears only in history (run 1 was superseded); exec-1 appears in
+    // both the still-visible lifecycle panel and the history list.
+    expect(screen.getByText("exec-0")).toBeInTheDocument();
+    expect(screen.getAllByText("exec-1").length).toBeGreaterThanOrEqual(1);
+    // Terminal status badges for both runs are present.
+    expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("failed").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps history per-operation: switching away and back retains the prior op's runs", async () => {
+    // Two action ops; each createExecution returns a stable id keyed by op name.
+    const ACTION_A: Operation = { name: "act_a", path: "/act_a", type: "T/A", kind: "action" };
+    const ACTION_B: Operation = { name: "act_b", path: "/act_b", type: "T/B", kind: "action" };
+    const getExecution = vi.fn(async (_t: string, _id: string, opName: string) => ({
+      id: `exec-${opName}`,
+      status: "completed" as const,
+      parameters: undefined,
+      ros2_status: null,
+    }));
+    const createExecution = vi.fn(async (_t: string, _id: string, opName: string) => ({
+      id: `exec-${opName}`,
+      status: "pending",
+      kind: "action",
+    }));
+    const client = {
+      listOperations: vi.fn().mockResolvedValue([ACTION_A, ACTION_B]),
+      createExecution,
+      getExecution,
+      cancelExecution: vi.fn(async () => undefined),
+    } as unknown as MedkitApiClient;
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await flushMicrotasks();
+
+    // Select op A, run it to terminal -> A has one history entry.
+    fireEvent.click(screen.getByRole("button", { name: "act_a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run act_a" }));
+    await flushMicrotasks();
+    await advanceOnePoll();
+    expect(screen.getByRole("button", { name: "Toggle execution history" }).textContent).toContain("1");
+
+    // Switch to op B: its history is empty (no history button).
+    fireEvent.click(screen.getByRole("button", { name: "act_b" }));
+    expect(screen.queryByRole("button", { name: "Toggle execution history" })).not.toBeInTheDocument();
+
+    // Switch back to op A: A's prior run is RETAINED (not cleared on op-select).
+    fireEvent.click(screen.getByRole("button", { name: "act_a" }));
+    const histBtn = screen.getByRole("button", { name: "Toggle execution history" });
+    expect(histBtn.textContent).toContain("1");
+    fireEvent.click(histBtn);
+    // Content assertion: the exact execution id + terminal status are shown.
+    expect(screen.getByText("exec-act_a")).toBeInTheDocument();
+    expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
   });
 });
 
 describe("OperationsPanel - lifecycle hygiene (unmount stops polling)", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -940,28 +1036,35 @@ describe("OperationsPanel - lifecycle hygiene (unmount stops polling)", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    await waitFor(() => screen.getByText("exec-abc-123"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
 
-    // One tick to establish polling
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => expect(client.getExecution).toHaveBeenCalledTimes(1));
+    // Two ticks to PROVE polling is actively running (status went non-terminal
+    // "running" and getExecution was called more than once), so the post-unmount
+    // freeze is a real stop, not a 0==0 no-op.
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
     const callsBeforeUnmount = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
 
     unmount();
 
-    // Advance more ticks - no new calls
-    await act(async () => { vi.advanceTimersByTime(3100); await Promise.resolve(); });
+    // Advance more ticks - no new calls after unmount.
+    await advanceOnePoll();
+    await advanceOnePoll();
+    await advanceOnePoll();
     expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBeforeUnmount);
   });
 });
 
 describe("OperationsPanel - entity change stops polling", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -981,14 +1084,15 @@ describe("OperationsPanel - entity change stops polling", () => {
         theme={THEME}
       />,
     );
-    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    await flushMicrotasks();
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
-    await waitFor(() => screen.getByText("exec-abc-123"));
+    await flushMicrotasks();
+    expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
 
-    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
-    await waitFor(() => expect(client.getExecution).toHaveBeenCalledTimes(1));
+    await advanceOnePoll();
+    expect(client.getExecution).toHaveBeenCalledTimes(1);
     const callsBeforeRerender = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
 
     // Change entity - should stop polling
@@ -1000,8 +1104,10 @@ describe("OperationsPanel - entity change stops polling", () => {
         theme={THEME}
       />,
     );
+    await flushMicrotasks();
 
-    await act(async () => { vi.advanceTimersByTime(2100); await Promise.resolve(); });
+    await advanceOnePoll();
+    await advanceOnePoll();
     expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBeforeRerender);
   });
 });
