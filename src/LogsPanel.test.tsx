@@ -415,3 +415,204 @@ describe("LogsPanel - manual Refresh button", () => {
     await waitFor(() => expect(listEntityLogs).toHaveBeenCalledTimes(2));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: auto-refresh
+// ---------------------------------------------------------------------------
+
+describe("LogsPanel - auto-refresh", () => {
+  // Helper: enable auto-refresh checkbox. Default interval in the panel is 5s.
+  function enableAutoRefresh() {
+    fireEvent.click(screen.getByRole("checkbox", { name: /auto-refresh/i }));
+  }
+
+  it("auto-refresh checkbox is off by default", async () => {
+    const client = makeClient();
+    renderPanel(client);
+    // Wait for initial render so checkbox is present
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /auto-refresh/i })).not.toBeChecked(),
+    );
+  });
+
+  it("re-fetches after the interval elapses when auto-refresh is on", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    renderPanel(client);
+
+    // Wait for initial fetch (time-based: resolve the microtask queue)
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const countAfterInit = listEntityLogs.mock.calls.length;
+    // Should have at least 1 call from initial load
+    expect(countAfterInit).toBeGreaterThanOrEqual(1);
+
+    // Enable auto-refresh (triggers an immediate re-fetch + sets up 5s interval)
+    await act(async () => {
+      enableAutoRefresh();
+    });
+
+    const countAfterEnable = listEntityLogs.mock.calls.length;
+    // Immediate call on enable
+    expect(countAfterEnable).toBeGreaterThan(countAfterInit);
+
+    // Advance clock by one interval (5s)
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(listEntityLogs.mock.calls.length).toBeGreaterThan(countAfterEnable);
+  });
+
+  it("advancing the clock without auto-refresh does NOT trigger extra fetches", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    renderPanel(client);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const countAfterInit = listEntityLogs.mock.calls.length;
+
+    // Auto-refresh stays off; advance 10 seconds
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+
+    // Only debounce timers fire - no additional listEntityLogs calls
+    expect(listEntityLogs.mock.calls.length).toBe(countAfterInit);
+  });
+
+  it("stops fetching when auto-refresh is turned off", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    renderPanel(client);
+
+    await act(async () => { await Promise.resolve(); });
+
+    // Enable
+    await act(async () => { enableAutoRefresh(); });
+    const countAfterEnable = listEntityLogs.mock.calls.length;
+
+    // Disable
+    await act(async () => { enableAutoRefresh(); }); // toggle off
+
+    // Advance - should NOT call again
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+
+    expect(listEntityLogs.mock.calls.length).toBe(countAfterEnable);
+  });
+
+  it("visibility hidden pauses auto-refresh; visible again resumes and immediately refreshes", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    renderPanel(client);
+
+    await act(async () => { await Promise.resolve(); });
+
+    // Enable auto-refresh
+    await act(async () => { enableAutoRefresh(); });
+    const countAfterEnable = listEntityLogs.mock.calls.length;
+
+    // Simulate document becoming hidden
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      writable: true,
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+
+    // Advance - should NOT trigger more fetches while hidden
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+    const countWhileHidden = listEntityLogs.mock.calls.length;
+    expect(countWhileHidden).toBe(countAfterEnable);
+
+    // Simulate document becoming visible again
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      writable: true,
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+
+    // Should immediately fetch on resume
+    expect(listEntityLogs.mock.calls.length).toBeGreaterThan(countWhileHidden);
+  });
+
+  it("honors the current severity filter in auto-refresh fetches", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    renderPanel(client);
+
+    await act(async () => { await Promise.resolve(); });
+
+    // Change severity to "error"
+    await act(async () => {
+      fireEvent.change(screen.getByRole("combobox", { name: /severity/i }), {
+        target: { value: "error" },
+      });
+      await Promise.resolve();
+    });
+
+    // Enable auto-refresh (triggers immediate fetch with current filters)
+    await act(async () => { enableAutoRefresh(); });
+
+    // The most recent call should include severity=error
+    const calls = listEntityLogs.mock.calls;
+    const lastCall = calls[calls.length - 1] as unknown[];
+    expect((lastCall[2] as { severity?: string })?.severity).toBe("error");
+
+    // Advance one interval - next call should also honor the filter
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    const latestCall = listEntityLogs.mock.calls[listEntityLogs.mock.calls.length - 1] as unknown[];
+    expect((latestCall[2] as { severity?: string })?.severity).toBe("error");
+  });
+
+  it("no fetch after unmount (no leak)", async () => {
+    vi.useFakeTimers();
+    const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
+    const client = makeClient({ listEntityLogs });
+    const { unmount } = renderPanel(client);
+
+    await act(async () => { await Promise.resolve(); });
+
+    // Enable auto-refresh
+    await act(async () => { enableAutoRefresh(); });
+    const countAfterEnable = listEntityLogs.mock.calls.length;
+
+    // Unmount
+    unmount();
+
+    // Advance clock after unmount - no more fetches
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+      await Promise.resolve();
+    });
+
+    expect(listEntityLogs.mock.calls.length).toBe(countAfterEnable);
+  });
+});
