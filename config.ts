@@ -4,9 +4,15 @@
 // Required to resolve ESM-only packages (exports with "import" condition)
 // such as @selfpatch/ros2-medkit-client-ts and openapi-fetch.
 
-import type { Configuration } from "webpack";
+// Plain JS (JSDoc types only): create-foxglove-extension loads this file via
+// native require, and CI's Node does not strip TypeScript syntax, so this
+// file must contain no TS-only tokens (no `import type`, no type annotations).
 
-export function webpack(config: Configuration): Configuration {
+/**
+ * @param {import("webpack").Configuration} config
+ * @returns {import("webpack").Configuration}
+ */
+export function webpack(config) {
     return {
         ...config,
         resolve: {
