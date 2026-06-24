@@ -15,23 +15,40 @@ import { type MedkitApiClient } from "./medkit-api";
 import { OperationRequestForm } from "./OperationRequestForm";
 import { getSchemaDefaults } from "./schema-utils";
 import type { TopicSchema } from "./schema-utils";
-import type { CreateExecutionResponse, Operation, SovdResourceEntityType } from "./types";
+import type {
+  CreateExecutionResponse,
+  ExecutionStatus,
+  Operation,
+  SovdResourceEntityType,
+} from "./types";
 import * as S from "./styles";
 import type { Theme } from "./styles";
+
+// Poll interval for action execution lifecycle (ms). The next poll is scheduled
+// only AFTER the previous getExecution resolves (recursive setTimeout), so polls
+// never overlap regardless of gateway latency.
+const POLL_INTERVAL_MS = 1000;
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-function isTerminal(status: string): boolean {
+function isTerminal(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "canceled";
 }
 
-function statusColor(status: string, c: ReturnType<typeof S.colors>): string {
+function statusColor(status: ExecutionStatus, c: ReturnType<typeof S.colors>): string {
   if (status === "completed") return c.success;
   if (status === "failed" || status === "canceled") return c.critical;
   if (status === "running") return c.accent;
   return c.warning; // pending
+}
+
+// Map a createExecution response status to the execution-lifecycle status used
+// for the active-execution view. The async-202 alias "accepted" is shown as
+// "pending" (the gateway never emits "accepted" on the executions/{id} poll).
+function initialActiveStatus(status: CreateExecutionResponse["status"]): ExecutionStatus {
+  return status === "accepted" ? "pending" : status;
 }
 
 // =============================================================================
@@ -40,7 +57,7 @@ function statusColor(status: string, c: ReturnType<typeof S.colors>): string {
 
 interface ActiveExecution {
   id: string;
-  status: string;
+  status: ExecutionStatus;
   parameters?: unknown;
   ros2Status?: string | null;
 }
@@ -48,7 +65,7 @@ interface ActiveExecution {
 interface ExecutionHistoryEntry {
   id: string;
   timestamp: Date;
-  terminalStatus: string;
+  terminalStatus: ExecutionStatus;
 }
 
 // =============================================================================
@@ -342,8 +359,10 @@ export function OperationsPanel({
 }: OperationsPanelProps): ReactElement {
   const c = S.colors(theme);
 
-  // Operations list state
-  const [loading, setLoading] = useState(false);
+  // Operations list state. `loading` starts true so the first paint shows the
+  // loading indicator rather than flashing "No operations" before the
+  // entity-change effect kicks off the initial listOperations call.
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [operations, setOperations] = useState<Operation[]>([]);
 
@@ -361,11 +380,17 @@ export function OperationsPanel({
   const [activeExecution, setActiveExecution] = useState<ActiveExecution | null>(null);
   const [polling, setPolling] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
-  const [executionHistory, setExecutionHistory] = useState<ExecutionHistoryEntry[]>([]);
+  // History is per-operation: switching to another op and back must not lose the
+  // first op's runs. Keyed by operation name; the displayed history is the
+  // selected op's bucket.
+  const [historyByOp, setHistoryByOp] = useState<Record<string, ExecutionHistoryEntry[]>>({});
   const [showHistory, setShowHistory] = useState(false);
 
+  const executionHistory =
+    selectedOp != null ? (historyByOp[selectedOp.name] ?? []) : [];
+
   // Lifecycle refs
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const pollSeqRef = useRef(0);
 
@@ -377,15 +402,30 @@ export function OperationsPanel({
     };
   }, []);
 
-  // Stop polling helper (stable - no deps that change)
+  // Stop polling helper (stable - no deps that change). Clears any pending tick
+  // and bumps the sequence so an in-flight tick that resolves later is discarded.
   const stopPolling = useCallback(() => {
-    if (intervalRef.current != null) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (timeoutRef.current != null) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
     pollSeqRef.current++;
     setPolling(false);
   }, []);
+
+  // Append a terminal entry to a given op's history, deduped by execution id so a
+  // poll-tick terminal and a cancel cannot double-insert the same id (which would
+  // produce duplicate React keys). Capped at the most recent 10.
+  const appendHistory = useCallback(
+    (opName: string, entry: ExecutionHistoryEntry) => {
+      setHistoryByOp((prev) => {
+        const bucket = prev[opName] ?? [];
+        if (bucket[0]?.id === entry.id) return prev; // already the latest entry
+        return { ...prev, [opName]: [entry, ...bucket.slice(0, 9)] };
+      });
+    },
+    [],
+  );
 
   // Load operations on mount or when entity changes
   useEffect(() => {
@@ -399,7 +439,7 @@ export function OperationsPanel({
     setOperations([]);
     setLoading(true);
     setActiveExecution(null);
-    setExecutionHistory([]);
+    setHistoryByOp({});
     setShowHistory(false);
 
     let cancelled = false;
@@ -423,47 +463,71 @@ export function OperationsPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, entityType, entityId]);
 
-  // Polling effect: drives when activeExecution?.id is set and polling=true
+  // Polling effect: drives when activeExecution?.id is set and polling=true.
+  //
+  // Uses a RECURSIVE setTimeout (not setInterval): each tick schedules the next
+  // one only after its own getExecution resolves, so requests never overlap even
+  // if a poll outlasts the interval. Hygiene preserved from the prior setInterval
+  // version:
+  //   - mountedRef gate: no setState after unmount.
+  //   - pollSeqRef gate (mySeq): a stale tick (from a superseded execution /
+  //     entity / op change) is discarded and never overwrites newer state.
+  //   - opName captured at effect entry (no stale-closure non-null assertion).
+  //   - terminal / cancel / unmount / entity-or-op change all stop the loop.
   useEffect(() => {
-    if (activeExecution?.id == null || !polling) return;
-    const mySeq = ++pollSeqRef.current;
-    const execId = activeExecution.id;
+    const execId = activeExecution?.id;
+    if (execId == null || !polling) return;
+    // Capture the op name now; never read a stale selectedOp inside the loop.
+    const opName = selectedOp?.name;
+    if (opName == null) return;
 
-    intervalRef.current = setInterval(() => {
-      if (!mountedRef.current || pollSeqRef.current !== mySeq) {
-        clearInterval(intervalRef.current!);
+    const mySeq = ++pollSeqRef.current;
+
+    const tick = async (): Promise<void> => {
+      if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
+      let exec;
+      try {
+        exec = await client.getExecution(entityType, entityId, opName, execId);
+      } catch {
+        // Transient poll error: re-check liveness, then retry on the next tick.
+        if (mountedRef.current && pollSeqRef.current === mySeq) {
+          timeoutRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+        }
         return;
       }
-      void (async () => {
-        try {
-          const exec = await client.getExecution(entityType, entityId, selectedOp!.name, execId);
-          if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
-          setActiveExecution({
-            id: execId,
-            status: exec.status,
-            parameters: exec.parameters,
-            ros2Status: exec.ros2_status,
-          });
-          if (isTerminal(exec.status)) {
-            clearInterval(intervalRef.current!);
-            intervalRef.current = null;
-            setPolling(false);
-            setExecutionHistory((prev) => [
-              { id: execId, timestamp: new Date(), terminalStatus: exec.status },
-              ...prev.slice(0, 9),
-            ]);
-          }
-        } catch {
-          // ignore transient poll errors
-        }
-      })();
-    }, 1000);
+      // Re-check after the await: discard if unmounted or superseded.
+      if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
+
+      setActiveExecution({
+        id: execId,
+        status: exec.status,
+        parameters: exec.parameters,
+        ros2Status: exec.ros2_status,
+      });
+
+      if (isTerminal(exec.status)) {
+        timeoutRef.current = null;
+        setPolling(false);
+        appendHistory(opName, {
+          id: execId,
+          timestamp: new Date(),
+          terminalStatus: exec.status,
+        });
+      } else {
+        timeoutRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+      }
+    };
+
+    timeoutRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
 
     return () => {
-      if (intervalRef.current != null) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      if (timeoutRef.current != null) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
+      // Bump the sequence so an in-flight tick resolving after teardown is
+      // discarded (no setState, no re-schedule).
+      pollSeqRef.current++;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeExecution?.id, polling]);
@@ -478,7 +542,9 @@ export function OperationsPanel({
       setResponse(null);
       setRunError(undefined);
       setActiveExecution(null);
-      setExecutionHistory([]);
+      // Do NOT clear historyByOp here: history is per-operation, so switching
+      // away and back to an op must retain that op's prior runs. The displayed
+      // executionHistory is derived from historyByOp[selectedOp.name].
       setShowHistory(false);
 
       const derivedSchema = op.type_info?.schema ?? {};
@@ -491,23 +557,23 @@ export function OperationsPanel({
   const handleCancel = useCallback(async () => {
     if (activeExecution?.id == null || selectedOp == null) return;
     const execId = activeExecution.id;
+    const opName = selectedOp.name;
     setCancelBusy(true);
     stopPolling();
     try {
-      await client.cancelExecution(entityType, entityId, selectedOp.name, execId);
+      await client.cancelExecution(entityType, entityId, opName, execId);
     } catch {
       // still show canceled in UI
     }
     if (mountedRef.current) {
-      const canceledStatus = "canceled";
+      const canceledStatus: ExecutionStatus = "canceled";
       setActiveExecution((prev) => (prev != null ? { ...prev, status: canceledStatus } : null));
-      setExecutionHistory((prev) => [
-        { id: execId, timestamp: new Date(), terminalStatus: canceledStatus },
-        ...prev.slice(0, 9),
-      ]);
+      // appendHistory dedupes by id, so a terminal poll-tick that already logged
+      // this execution will not be double-inserted here.
+      appendHistory(opName, { id: execId, timestamp: new Date(), terminalStatus: canceledStatus });
       setCancelBusy(false);
     }
-  }, [activeExecution, client, entityType, entityId, selectedOp, stopPolling]);
+  }, [activeExecution, client, entityType, entityId, selectedOp, stopPolling, appendHistory]);
 
   const handleRun = useCallback(async () => {
     if (selectedOp == null) return;
@@ -528,7 +594,12 @@ export function OperationsPanel({
       if (!mountedRef.current) return;
       if (selectedOp.kind === "action" && res.id != null) {
         // Start lifecycle polling
-        setActiveExecution({ id: res.id, status: res.status, parameters: undefined, ros2Status: undefined });
+        setActiveExecution({
+          id: res.id,
+          status: initialActiveStatus(res.status),
+          parameters: undefined,
+          ros2Status: undefined,
+        });
         setPolling(true);
       } else {
         // Service or action without id: show immediate response
@@ -676,7 +747,7 @@ export function OperationsPanel({
             onClick={() => void handleRun()}
             aria-label={`Run ${selectedOp.name}`}
           >
-            {running ? "Running..." : "Run"}
+            {running ? "Running..." : polling ? "Polling..." : "Run"}
           </button>
 
           {/* Service response */}
@@ -684,7 +755,12 @@ export function OperationsPanel({
             <ResponseDisplay response={response} theme={theme} />
           )}
 
-          {/* Action execution lifecycle */}
+          {/* Action execution lifecycle.
+              Deliberate divergence from web_ui: web_ui auto-hides the action
+              panel ~3s after the execution reaches a terminal state; the
+              Foxglove panel keeps it visible so the operator retains the final
+              status/result until they select another op or re-run. No auto-hide
+              timer here by design. */}
           {activeExecution != null && selectedOp.kind === "action" && (
             <ActionExecutionPanel
               activeExecution={activeExecution}
@@ -694,13 +770,15 @@ export function OperationsPanel({
             />
           )}
 
-          {/* Execution history */}
+          {/* Execution history (per-operation, from historyByOp[selectedOp.name]) */}
           {executionHistory.length > 0 && (
             <ExecutionHistory
               entries={executionHistory}
               show={showHistory}
               onToggle={() => setShowHistory((v) => !v)}
-              onClear={() => setExecutionHistory([])}
+              onClear={() =>
+                setHistoryByOp((prev) => ({ ...prev, [selectedOp.name]: [] }))
+              }
               theme={theme}
             />
           )}
@@ -726,6 +804,9 @@ function OperationListItem({
   onSelect: (op: Operation) => void;
 }): ReactElement {
   const c = S.colors(theme);
+  // Inline styles cannot use :focus-visible, so track focus in state to render a
+  // visible keyboard-focus ring on this role="button" element.
+  const [focused, setFocused] = useState(false);
   return (
     <div
       role="button"
@@ -742,10 +823,19 @@ function OperationListItem({
         cursor: "pointer",
         background: selected ? c.accent + "22" : c.bgCard,
         border: `1px solid ${selected ? c.accent : c.borderLight}`,
+        outline: focused ? `2px solid ${c.accent}` : "none",
+        outlineOffset: focused ? 1 : 0,
+        boxShadow: focused ? `0 0 0 2px ${c.accent}55` : "none",
       }}
       onClick={() => onSelect(op)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onSelect(op);
+        // Space would scroll the panel by default; prevent that and activate.
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(op);
+        }
       }}
     >
       <span style={{ fontSize: 12, fontWeight: selected ? 600 : 400, color: c.text, flex: 1 }}>
