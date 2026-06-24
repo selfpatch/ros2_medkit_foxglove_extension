@@ -39,7 +39,6 @@ interface NumericFieldProps {
 }
 
 function NumericField({ id, schemaType, value, onChange, theme }: NumericFieldProps): JSX.Element {
-    const c = S.colors(theme);
     const lower = schemaType.toLowerCase();
     const isInteger = INTEGER_TYPES.includes(lower);
     const isUnsigned = lower.startsWith("uint") || lower === "byte";

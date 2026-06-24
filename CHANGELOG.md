@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Operations request forms and action execution lifecycle
+
+The Operations tab in the Entity Browser panel now provides full interactive
+operation support:
+
+- Request/goal form generated from the operation schema (service request or
+  action goal); fields are rendered per-type (numeric, boolean, string, nested
+  object, array) with schema-seeded default values.
+- Run service operations synchronously - result JSON is shown inline.
+- Run action operations asynchronously - createExecution starts the action,
+  then the panel polls GET executions/{id} every ~1 s, displaying live status,
+  ROS 2 status code, and feedback parameters.
+- Cancel running actions via DELETE.
+- Per-operation execution history (last 10 runs) with timestamp and terminal
+  status.
+
 ### Migrate HTTP layer to generated typed client
 
 All HTTP calls and SSE streams now route through the generated
