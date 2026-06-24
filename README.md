@@ -54,6 +54,8 @@ streaming.
 src/
 ├── index.ts                   # Extension entry - registers all three panels
 ├── types.ts                   # ros2_medkit gateway type definitions
+├── gateway-client.ts          # Typed client factory (@selfpatch/ros2-medkit-client-ts)
+├── api-dispatch.ts            # Per-entity-type typed path dispatch helpers
 ├── medkit-api.ts              # HTTP API client for ros2_medkit gateway
 ├── updates-api.ts             # SOVD /updates resource client
 ├── shared-connection.ts       # Cross-panel gateway connection (localStorage)
@@ -63,6 +65,11 @@ src/
 ├── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
 └── UpdatesPanel.tsx           # SOVD updates catalog + actions
 ```
+
+The HTTP layer (`medkit-api.ts`, `updates-api.ts`) uses the generated typed client from
+`@selfpatch/ros2-medkit-client-ts` (runtime dependency). `gateway-client.ts` builds an
+openapi-fetch client bound to the current gateway connection; `api-dispatch.ts` routes
+each call to the correct typed per-entity-type path.
 
 ## Compatibility
 

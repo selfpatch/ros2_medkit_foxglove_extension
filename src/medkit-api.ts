@@ -50,7 +50,7 @@ import {
 
 /** Wrap an openapi-fetch error value (GenericError schema or MedkitError at runtime) into a thrown Error. */
 function throwApiError(error: unknown): never {
-  if (isMedkitError(error)) throw new MedkitApiError(error as MedkitError);
+  if (isMedkitError(error)) throw new MedkitApiError(error);
   throw new Error(typeof error === "object" && error !== null && "message" in error
     ? String((error as { message: unknown }).message)
     : JSON.stringify(error));
@@ -68,22 +68,6 @@ function normalizeBasePath(path: string): string {
   while (p.startsWith("/")) p = p.slice(1);
   while (p.endsWith("/")) p = p.slice(0, -1);
   return p;
-}
-
-async function fetchJSON<T>(url: string, init?: RequestInit, timeout = 10_000): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as T;
-  } catch (err) {
-    clearTimeout(timer);
-    if (err instanceof Error && err.name === "AbortError")
-      throw new Error("Request timeout");
-    throw err;
-  }
 }
 
 function unwrapItems<T>(response: unknown): T[] {
@@ -119,7 +103,9 @@ export class MedkitApiClient {
 
   async ping(): Promise<boolean> {
     try {
-      const { error } = await this.client.GET("/health");
+      const { error } = await this.client.GET("/health", {
+        signal: AbortSignal.timeout(3000),
+      });
       return !error;
     } catch {
       return false;
