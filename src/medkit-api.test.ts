@@ -114,6 +114,100 @@ function stubFetchError(status: number): void {
     );
 }
 
+describe("MedkitApiClient.listOperations - type_info.schema extraction", () => {
+    it("populates type_info.schema from x-medkit.type_info.request for a service", async () => {
+        stubFetch({
+            items: [
+                {
+                    id: "set_speed",
+                    name: "set_speed",
+                    asynchronous_execution: false,
+                    "x-medkit": {
+                        ros2: { kind: "service", service: "/set_speed", type: "std_srvs/SetBool" },
+                        type_info: {
+                            request: {
+                                type: "object",
+                                properties: {
+                                    data: { type: "boolean" },
+                                },
+                            },
+                            response: {
+                                type: "object",
+                                properties: {
+                                    success: { type: "boolean" },
+                                    message: { type: "string" },
+                                },
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const ops = await client.listOperations("apps", "motor");
+        expect(ops).toHaveLength(1);
+        const op = ops[0];
+        expect(op.kind).toBe("service");
+        expect(op.type_info).toBeDefined();
+        // request schema mapped: boolean -> bool
+        expect(op.type_info?.schema).toEqual({ data: { type: "bool" } });
+    });
+
+    it("populates type_info.schema from x-medkit.type_info.goal for an action", async () => {
+        stubFetch({
+            items: [
+                {
+                    id: "navigate_to_pose",
+                    name: "navigate_to_pose",
+                    asynchronous_execution: true,
+                    "x-medkit": {
+                        ros2: { kind: "action", action: "/navigate_to_pose", type: "nav2_msgs/NavigateToPose" },
+                        type_info: {
+                            goal: {
+                                type: "object",
+                                properties: {
+                                    x: { type: "number" },
+                                    y: { type: "number" },
+                                },
+                            },
+                            result: {
+                                type: "object",
+                                properties: { result: { type: "integer" } },
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const ops = await client.listOperations("apps", "nav");
+        expect(ops).toHaveLength(1);
+        const op = ops[0];
+        expect(op.kind).toBe("action");
+        expect(op.type_info).toBeDefined();
+        // goal schema mapped: number -> float64
+        expect(op.type_info?.schema).toEqual({
+            x: { type: "float64" },
+            y: { type: "float64" },
+        });
+    });
+
+    it("leaves type_info undefined when x-medkit.type_info is absent", async () => {
+        stubFetch({
+            items: [
+                {
+                    id: "ping",
+                    name: "ping",
+                    "x-medkit": { ros2: { kind: "service", service: "/ping", type: "" } },
+                },
+            ],
+        });
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const ops = await client.listOperations("apps", "motor");
+        expect(ops[0].type_info).toBeUndefined();
+    });
+});
+
 describe("MedkitApiClient.listBulkDataCategories", () => {
     it("returns { items: [] } on gateway error instead of throwing", async () => {
         stubFetchError(404);
