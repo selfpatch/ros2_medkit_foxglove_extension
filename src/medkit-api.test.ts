@@ -311,10 +311,11 @@ describe("MedkitApiClient.getRoot", () => {
         stubFetch(overview);
         const client = new MedkitApiClient("http://gw", "api/v1");
         const result = await client.getRoot();
-        // Verify getRoot hits the root path (GET /) - not an accidental sub-path
+        // Verify getRoot hits the EXACT root URL (GET /) - assert it verbatim so
+        // a regression that doubles the slash ("http://gw/api/v1//") would fail.
         const calledUrl = vi.mocked(fetch).mock.calls[0][0];
         const calledPath = typeof calledUrl === "string" ? calledUrl : (calledUrl as Request).url;
-        expect(calledPath.replace(/\/$/, "")).toBe("http://gw/api/v1");
+        expect(calledPath).toBe("http://gw/api/v1/");
         expect(result.name).toBe("ros2_medkit Gateway");
         expect(result.version).toBe("1.0.0");
         expect(result.api_base).toBe("/api/v1");
@@ -327,5 +328,68 @@ describe("MedkitApiClient.getRoot", () => {
         stubFetchError(503);
         const client = new MedkitApiClient("http://gw", "api/v1");
         await expect(client.getRoot()).rejects.toThrow();
+    });
+});
+
+describe("MedkitApiClient.resetAllConfigurations", () => {
+    /** Stub fetch to return the given JSON body with the given status. */
+    function stubJson(body: unknown, status: number): void {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(
+                async () =>
+                    new Response(JSON.stringify(body), {
+                        status,
+                        headers: { "Content-Type": "application/json" },
+                    }),
+            ),
+        );
+    }
+
+    it("derives reset/failed counts from the REAL ConfigurationDeleteMultiStatus 207 body", async () => {
+        // The real 207 body has NO reset_count/failed_count fields - only
+        // { entity_id, results: [{ app_id, node, success, error?, details? }] }.
+        const multiStatus = {
+            entity_id: "motor-app",
+            results: [
+                { app_id: "motor-app", node: "/motor", success: true },
+                { app_id: "motor-app", node: "/motor", success: true },
+                { app_id: "motor-app", node: "/motor", success: false, error: "read_only" },
+            ],
+        };
+        stubJson(multiStatus, 207);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.resetAllConfigurations("apps", "motor-app");
+        expect(result).toEqual({ reset_count: 2, failed_count: 1 });
+    });
+
+    it("returns all-success counts when every result succeeds", async () => {
+        const multiStatus = {
+            entity_id: "motor-app",
+            results: [
+                { app_id: "motor-app", node: "/motor", success: true },
+                { app_id: "motor-app", node: "/motor", success: true },
+            ],
+        };
+        stubJson(multiStatus, 200);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.resetAllConfigurations("apps", "motor-app");
+        expect(result).toEqual({ reset_count: 2, failed_count: 0 });
+    });
+
+    it("returns undefined when the body has no results array (e.g. 204 No Content)", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(null, { status: 204 })),
+        );
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const result = await client.resetAllConfigurations("apps", "motor-app");
+        expect(result).toBeUndefined();
+    });
+
+    it("throws on a non-2xx gateway response", async () => {
+        stubFetchError(500);
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        await expect(client.resetAllConfigurations("apps", "motor-app")).rejects.toThrow();
     });
 });
