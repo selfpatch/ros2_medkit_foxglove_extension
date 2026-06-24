@@ -76,27 +76,35 @@ export function ServerInfoPanelView({
         setOverview(undefined);
         setVersionInfo(undefined);
 
+        // Abort the in-flight root fetch when baseUrl changes (or on unmount)
+        // so a stale response from a previous URL cannot land after a newer one.
+        const ac = new AbortController();
+
         // Pass fetchImpl into the client so the typed openapi-fetch client
         // uses the injected fetch (useful for tests).
         const client = new MedkitApiClient(baseUrl, "", fetchImpl);
 
         void Promise.all([
-            client.getRoot(),
+            client.getRoot(ac.signal),
             client.getVersionInfo().catch(() => undefined),
         ])
             .then(([root, vi]) => {
-                if (mountedRef.current) {
-                    setOverview(root);
-                    setVersionInfo(vi);
-                    setLoading(false);
-                }
+                if (ac.signal.aborted || !mountedRef.current) return;
+                setOverview(root);
+                setVersionInfo(vi);
+                setLoading(false);
             })
             .catch((e: unknown) => {
-                if (mountedRef.current) {
-                    setError(e instanceof Error ? e.message : String(e));
-                    setLoading(false);
-                }
+                // A deliberate abort surfaces as a rejection here; ignore it so
+                // the panel does not flash an error on a superseded fetch.
+                if (ac.signal.aborted || !mountedRef.current) return;
+                setError(e instanceof Error ? e.message : String(e));
+                setLoading(false);
             });
+
+        return () => {
+            ac.abort();
+        };
     }, [baseUrl, fetchImpl]);
 
     if (loading) {
@@ -163,13 +171,13 @@ export function ServerInfoPanelView({
                 {enabledCaps.length === 0 ? (
                     <div style={{ color: c.textMuted, fontSize: 12 }}>No capabilities reported.</div>
                 ) : (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <div
+                        role="list"
+                        aria-label="Supported Features"
+                        style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                    >
                         {enabledCaps.map((k) => (
-                            <span
-                                key={k}
-                                style={capBadgeStyle(theme)}
-                                aria-label={`Capability: ${CAPABILITY_LABELS[k]}`}
-                            >
+                            <span key={k} role="listitem" style={capBadgeStyle(theme)}>
                                 {CAPABILITY_LABELS[k]}
                             </span>
                         ))}
