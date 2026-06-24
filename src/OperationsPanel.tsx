@@ -516,6 +516,7 @@ export function OperationsPanel({
 
       const res = await client.createExecution(entityType, entityId, selectedOp.name, request);
 
+      if (!mountedRef.current) return;
       if (selectedOp.kind === "action" && res.id != null) {
         // Start lifecycle polling
         setActiveExecution({ id: res.id, status: res.status, parameters: undefined, ros2Status: undefined });
@@ -525,9 +526,10 @@ export function OperationsPanel({
         setResponse(res);
       }
     } catch (err) {
+      if (!mountedRef.current) return;
       setRunError(err instanceof Error ? err.message : "Execution failed");
     } finally {
-      setRunning(false);
+      if (mountedRef.current) setRunning(false);
     }
   }, [client, entityType, entityId, selectedOp, formValue, stopPolling]);
 
@@ -661,7 +663,7 @@ export function OperationsPanel({
 
           <button
             style={{ ...S.btn(theme, "primary"), marginTop: 10, width: "100%" }}
-            disabled={running}
+            disabled={running || polling}
             onClick={() => void handleRun()}
             aria-label={`Run ${selectedOp.name}`}
           >
