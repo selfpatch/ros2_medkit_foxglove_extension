@@ -81,7 +81,7 @@ describe("fetchUpdateIds", () => {
         });
     });
 
-    it("surfaces gateway error_code message from JSON error body", async () => {
+    it("surfaces fallback message when error body is non-JSON (plain text -> typed-client fallback)", async () => {
         // RED: old test checked plain-text body passthrough (`"upstream exploded"`).
         // The typed client's errorMiddleware intercepts all non-2xx responses and
         // parses them as JSON. A non-JSON body (plain text) becomes a fallback
@@ -148,7 +148,7 @@ describe("fetchUpdateDetail", () => {
 });
 
 describe("trigger* mutations", () => {
-    it("prepare hits PUT /updates/{id}/prepare with JSON body", async () => {
+    it("prepare hits PUT /updates/{id}/prepare with no request body", async () => {
         const f = fakeFetch(() => new Response(null, { status: 202 }));
         await triggerPrepare(BASE, "u1", { foo: "bar" }, f);
         // RED: openapi-fetch passes a Request object. The schema for

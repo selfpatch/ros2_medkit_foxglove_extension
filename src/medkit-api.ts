@@ -25,9 +25,8 @@ import type {
   BulkDataList,
 } from "./types";
 
-import { createGatewayClient, MedkitApiError } from "./gateway-client";
+import { createGatewayClient, MedkitApiError, isMedkitError } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
-import { isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
 import {
   getEntityData,
   getEntityDataItem,
@@ -52,7 +51,7 @@ function throwApiError(error: unknown): never {
   if (isMedkitError(error)) throw new MedkitApiError(error);
   throw new Error(typeof error === "object" && error !== null && "message" in error
     ? String((error as { message: unknown }).message)
-    : JSON.stringify(error));
+    : String(error));
 }
 
 function normalizeUrl(url: string): string {
@@ -114,6 +113,8 @@ export class MedkitApiClient {
   async getVersionInfo(): Promise<VersionInfo> {
     const { data, error } = await this.client.GET("/version-info");
     if (error) throwApiError(error);
+    // The schema allows null in optional fields; the local VersionInfo type
+    // treats them as undefined-only. Cast through unknown to bridge the gap.
     return data as unknown as VersionInfo;
   }
 
@@ -122,8 +123,7 @@ export class MedkitApiClient {
   async listAreas(): Promise<SovdEntity[]> {
     const { data, error } = await this.client.GET("/areas");
     if (error) throwApiError(error);
-    const raw = data as unknown;
-    const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).areas ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string }>;
+    const items = data?.items ?? [];
     return items.map((a) => ({
       id: a.id,
       name: a.id,
@@ -371,6 +371,8 @@ export class MedkitApiClient {
       request,
     );
     if (error) throwApiError(error);
+    // Response intentionally flattens 200 (sync result) and 202 (async created)
+    // into CreateExecutionResponse - callers do not disambiguate the two branches.
     return data as unknown as CreateExecutionResponse;
   }
 
@@ -488,9 +490,12 @@ export class MedkitApiClient {
 
     const parseFaultData = (data: unknown): Fault | null => {
       try {
+        if (data === null || typeof data !== "object") {
+          throw new TypeError("Unexpected non-object fault event data");
+        }
         const raw = data as Record<string, unknown>;
         const fd = (raw.fault as Record<string, unknown> | undefined) ?? raw;
-        if ("fault_code" in fd) return this.transformFault(fd);
+        if (typeof fd === "object" && fd !== null && "fault_code" in fd) return this.transformFault(fd);
         return fd as unknown as Fault;
       } catch {
         if (!unsubscribed) onError?.(new Error("Failed to parse fault event"));
