@@ -108,6 +108,13 @@ export function convertJsonSchemaToTopicSchema(jsonSchema: unknown): TopicSchema
         return result;
     }
 
+    // Opaque object schema: a bare { type: "object" } with no properties carries
+    // no field information. Returning it as-is would render the literal "type"
+    // key as a phantom form field, so collapse it to an empty schema instead.
+    if (schema.type === "object") {
+        return {};
+    }
+
     return jsonSchema as TopicSchema;
 }
 
@@ -178,6 +185,7 @@ export function isBooleanType(type: string): boolean {
  * - nested object (fields present) -> recursive object of defaults
  * - numeric -> 0
  * - bool -> false
+ * - opaque object (type "object", no fields) -> {} (structural empty object)
  * - everything else (string, unknown) -> ""
  * Mirrors web_ui getDefaultValue (schema-utils.ts:159-178).
  */
@@ -197,6 +205,11 @@ export function getDefaultValue(schema: SchemaFieldType): unknown {
     }
     if (isBooleanType(schema.type)) {
         return false;
+    }
+    // Opaque object with no fields: yield a structural empty object so the JSON
+    // fallback input seeds with `{}` rather than an empty string.
+    if (schema.type === "object") {
+        return {};
     }
     return "";
 }
