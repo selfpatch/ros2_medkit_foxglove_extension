@@ -23,10 +23,11 @@ The Configurations tab in the Entity Browser now provides full inline editing:
 - Each ROS 2 parameter is rendered with a type-aware editor: toggle for bool,
   numeric input for int and double, text field for string.
 - Individual parameters can be saved one at a time with a Save button per row.
+- A per-parameter Reset restores a single parameter to its gateway-reported default.
 - A Reset all button restores every parameter to its gateway-reported default in a
-  single request.
-- The entire tab is read-only when the gateway reports that the configurator
-  capability is not available for the entity.
+  single request; partial failures are surfaced as "Reset N, M failed".
+- Parameters the gateway marks read-only are shown locked, with no editor or
+  Save/Reset controls.
 
 ### ros2_medkit Server Info panel
 
