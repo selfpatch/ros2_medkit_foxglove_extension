@@ -1,6 +1,6 @@
 // Copyright 2024-2026 bburda. Apache-2.0 license.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import { ServerInfoPanelView } from "./ServerInfoPanel";
@@ -126,6 +126,13 @@ describe("ServerInfoPanelView", () => {
         expect(screen.queryByText("Scripts")).not.toBeInTheDocument();
         expect(screen.queryByText("TLS")).not.toBeInTheDocument();
         expect(screen.queryByText("Triggers")).not.toBeInTheDocument();
+        // Exactly one badge per enabled capability - an unexpected extra badge
+        // (e.g. a disabled cap leaking through) must fail this count. Scope to
+        // the Supported Features list so the API Entry Points <li>s (also
+        // role=listitem) are not counted.
+        const enabledCount = Object.values(FULL_OVERVIEW.capabilities).filter(Boolean).length;
+        const capList = screen.getByRole("list", { name: /supported features/i });
+        expect(within(capList).getAllByRole("listitem")).toHaveLength(enabledCount);
     });
 
     it("renders the API entry points list", async () => {
@@ -220,5 +227,57 @@ describe("ServerInfoPanelView", () => {
         // SOVD version label absent when version-info unavailable
         expect(screen.queryByText("SOVD Version")).not.toBeInTheDocument();
         expect(screen.queryByText("Base URI")).not.toBeInTheDocument();
+    });
+
+    it("aborts the in-flight root fetch when baseUrl changes (stale result discarded)", async () => {
+        // First fetch hangs until released; capture its abort signal so we can
+        // assert the effect cleanup aborted it after the baseUrl changed.
+        let firstSignal: AbortSignal | undefined;
+        let releaseFirst!: () => void;
+        const firstHang = new Promise<void>((r) => { releaseFirst = r; });
+
+        const SECOND_OVERVIEW: RootOverview = { ...FULL_OVERVIEW, name: "Second Gateway" };
+
+        const isRootUrl = (url: string, host: string) =>
+            url === `http://${host}/api/v1/` || url === `http://${host}/api/v1`;
+
+        const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input instanceof Request ? input.url : input.toString();
+            const signal = input instanceof Request ? input.signal : init?.signal;
+            // version-info is non-fatal in the panel; 404 it for both hosts so
+            // only the root request matters here.
+            if (url.includes("/version-info")) {
+                return jsonResponse({ message: "no version info" }, 404);
+            }
+            // Root request for the first (slow) baseUrl: capture ITS signal and
+            // hang until released.
+            if (isRootUrl(url, "gw-a")) {
+                firstSignal = signal ?? undefined;
+                await firstHang;
+                return jsonResponse(FULL_OVERVIEW);
+            }
+            // Root request for the second baseUrl resolves immediately.
+            if (isRootUrl(url, "gw-b")) {
+                return jsonResponse(SECOND_OVERVIEW);
+            }
+            return jsonResponse({ message: "not found" }, 404);
+        }) as unknown as typeof fetch;
+
+        const { rerender } = render(<ServerInfoPanelView baseUrl="http://gw-a/api/v1" fetchImpl={f} />);
+        // Let the first effect run and issue its hanging fetch.
+        await waitFor(() => expect(firstSignal).toBeInstanceOf(AbortSignal));
+        expect(firstSignal!.aborted).toBe(false);
+
+        // Change baseUrl: the cleanup must abort the first fetch's signal.
+        rerender(<ServerInfoPanelView baseUrl="http://gw-b/api/v1" fetchImpl={f} />);
+        await waitFor(() => expect(firstSignal!.aborted).toBe(true));
+
+        // The second (fresh) result renders; the stale first result is discarded
+        // even after it is released.
+        await waitFor(() => expect(screen.getByText("Second Gateway")).toBeInTheDocument());
+        releaseFirst();
+        await waitFor(() => {});
+        expect(screen.queryByText("ros2_medkit Gateway")).not.toBeInTheDocument();
+        expect(screen.getByText("Second Gateway")).toBeInTheDocument();
     });
 });
