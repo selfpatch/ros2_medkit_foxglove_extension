@@ -41,6 +41,8 @@ import {
   getEntityDataItem,
   getEntityConfigurations,
   putEntityConfiguration,
+  deleteEntityConfiguration as dispatchDeleteEntityConfiguration,
+  deleteEntityConfigurations as dispatchDeleteEntityConfigurations,
   getEntityOperations,
   postEntityExecution,
   getExecution as dispatchGetExecution,
@@ -357,6 +359,36 @@ export class MedkitApiClient {
       { data: value },
     );
     if (error) throwApiError(error);
+  }
+
+  async resetConfiguration(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    paramName: string,
+  ): Promise<void> {
+    const { error } = await dispatchDeleteEntityConfiguration(
+      this.client,
+      entityType,
+      entityId,
+      paramName,
+    );
+    if (error) throwApiError(error);
+  }
+
+  async resetAllConfigurations(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+  ): Promise<{ reset_count?: number; failed_count?: number } | void> {
+    const { data, error } = await dispatchDeleteEntityConfigurations(
+      this.client,
+      entityType,
+      entityId,
+    );
+    if (error) throwApiError(error);
+    if (data != null) {
+      const raw = data as unknown as { reset_count?: number; failed_count?: number };
+      if (raw.reset_count != null || raw.failed_count != null) return raw;
+    }
   }
 
   // ── Operations ────────────────────────────────────────────────────
