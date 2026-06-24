@@ -15,9 +15,13 @@ interface FakeRoute {
 }
 
 function buildFetch(routes: FakeRoute[]): typeof fetch {
+    // openapi-fetch passes a Request object as the first argument (not a string URL
+    // + RequestInit pair). Handle both forms so tests work with the typed client.
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = typeof input === "string" ? input : input.toString();
-        const method = (init?.method ?? "GET") as "GET" | "PUT" | "DELETE" | "POST";
+        const url = input instanceof Request ? input.url : input.toString();
+        const method = (
+            input instanceof Request ? input.method : (init?.method ?? "GET")
+        ) as "GET" | "PUT" | "DELETE" | "POST";
         const path = url.replace(BASE, "");
         for (const route of routes) {
             if (route.method === method && path === route.pathSuffix) {
@@ -140,8 +144,14 @@ describe("UpdatesPanelView", () => {
     });
 
     it("renders error banner when /updates throws non-501", async () => {
+        // Use SOVD GenericError format (error_code + message) so parseGenericError
+        // in the client's errorMiddleware extracts the message correctly.
         const f = buildFetch([
-            { method: "GET", pathSuffix: "/updates", response: () => jsonResponse({ message: "boom" }, 500) },
+            {
+                method: "GET",
+                pathSuffix: "/updates",
+                response: () => jsonResponse({ message: "boom", error_code: "x-medkit-internal-error" }, 500),
+            },
         ]);
         render(<UpdatesPanelView baseUrl={BASE} pollMs={0} fetchImpl={f} />);
         await waitFor(() => {
@@ -280,7 +290,7 @@ describe("UpdatesPanelView", () => {
         let releaseFirst: (r: Response) => void = () => {};
         let listCall = 0;
         const f = vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
+            const url = input instanceof Request ? input.url : input.toString();
             if (url.endsWith("/updates")) {
                 listCall += 1;
                 if (listCall === 1) return new Promise<Response>((res) => (releaseFirst = res));
@@ -305,7 +315,7 @@ describe("UpdatesPanelView", () => {
         let inFlight = 0;
         let maxInFlight = 0;
         const f = vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
+            const url = input instanceof Request ? input.url : input.toString();
             if (url.endsWith("/updates")) return jsonResponse({ items: ids });
             inFlight += 1;
             maxInFlight = Math.max(maxInFlight, inFlight);
@@ -321,7 +331,7 @@ describe("UpdatesPanelView", () => {
     it("does not re-poll /status for a terminal (completed) update", async () => {
         const statusCalls = vi.fn();
         const f = vi.fn(async (input: RequestInfo | URL) => {
-            const url = input.toString();
+            const url = input instanceof Request ? input.url : input.toString();
             if (url.endsWith("/updates")) return jsonResponse({ items: ["u1"] });
             if (url.endsWith("/u1/status")) {
                 statusCalls();
