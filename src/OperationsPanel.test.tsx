@@ -1,5 +1,5 @@
 // Copyright 2024-2026 bburda. Apache-2.0 license.
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
@@ -16,6 +16,19 @@ const SERVICE_OP: Operation = {
   path: "/set_speed",
   type: "std_srvs/SetBool",
   kind: "service",
+};
+
+// Operation with a non-empty schema - expects real form fields to render.
+const SERVICE_OP_WITH_SCHEMA: Operation = {
+  name: "set_bool",
+  path: "/set_bool",
+  type: "std_srvs/SetBool",
+  kind: "service",
+  type_info: {
+    schema: {
+      data: { type: "bool" },
+    },
+  },
 };
 
 const ACTION_OP: Operation = {
@@ -205,6 +218,25 @@ describe("OperationsPanel - selecting an operation shows form", () => {
     expect(screen.getByText("No parameters")).toBeInTheDocument();
     // Run button appears
     expect(screen.getByRole("button", { name: `Run ${SERVICE_OP.name}` })).toBeInTheDocument();
+  });
+
+  it("renders form fields (not 'No parameters') when op.type_info.schema has fields", async () => {
+    const client = makeClient([SERVICE_OP_WITH_SCHEMA]);
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="components"
+        entityId="c1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: SERVICE_OP_WITH_SCHEMA.name }));
+    fireEvent.click(screen.getByRole("button", { name: SERVICE_OP_WITH_SCHEMA.name }));
+
+    // The form renders a field row for "data" - "No parameters" must not appear.
+    expect(screen.queryByText("No parameters")).not.toBeInTheDocument();
+    // OperationRequestForm renders a label containing the field name "data".
+    expect(screen.getByText("data")).toBeInTheDocument();
   });
 
   it("shows 'Request' label for a service operation", async () => {
