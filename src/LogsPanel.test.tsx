@@ -199,21 +199,29 @@ describe("LogsPanel - message search narrows results", () => {
 
 describe("LogsPanel - context filter", () => {
   it("passes context param to listEntityLogs after debounce elapses", async () => {
+    vi.useFakeTimers();
     const listEntityLogs = vi.fn().mockResolvedValue({ items: [] });
     const client = makeClient({ listEntityLogs });
 
     renderPanel(client);
-    // Wait for initial fetch
-    await waitFor(() => expect(listEntityLogs).toHaveBeenCalledTimes(1));
+    // Let initial fetch settle
+    await act(async () => { await Promise.resolve(); });
+    const countAfterInit = listEntityLogs.mock.calls.length;
+    expect(countAfterInit).toBeGreaterThanOrEqual(1);
 
     const contextInput = screen.getByPlaceholderText(/context filter/i);
-    fireEvent.change(contextInput, { target: { value: "/sensor" } });
+    await act(async () => {
+      fireEvent.change(contextInput, { target: { value: "/sensor" } });
+    });
 
-    // Wait for debounce (300ms) to elapse and the re-fetch to fire.
-    // The waitFor default timeout is 1000ms which is enough for the 300ms debounce.
-    await waitFor(() => expect(listEntityLogs).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    // Advance by exactly the debounce delay (300ms)
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+    });
 
-    const lastCall = listEntityLogs.mock.calls[1] as unknown[];
+    expect(listEntityLogs).toHaveBeenCalledTimes(countAfterInit + 1);
+    const lastCall = listEntityLogs.mock.calls[countAfterInit] as unknown[];
     expect((lastCall[2] as { context?: string })?.context).toBe("/sensor");
   });
 });
@@ -388,7 +396,7 @@ describe("LogsPanel - no-LogManager state (503/404)", () => {
     });
   });
 
-  it("does NOT show 'no LogManager' for generic errors; shows 'Last refresh failed'", async () => {
+  it("does NOT show 'no LogManager' for generic errors; shows refresh-failed indicator", async () => {
     const client = makeClient({
       listEntityLogs: vi.fn().mockRejectedValue(new Error("Network error")),
     });
@@ -477,6 +485,8 @@ describe("LogsPanel - auto-refresh", () => {
       await Promise.resolve();
     });
     const countAfterInit = listEntityLogs.mock.calls.length;
+    // Sanity: initial fetch must have fired before we advance the clock
+    expect(countAfterInit).toBeGreaterThanOrEqual(1);
 
     // Auto-refresh stays off; advance 10 seconds
     await act(async () => {
@@ -614,5 +624,97 @@ describe("LogsPanel - auto-refresh", () => {
     });
 
     expect(listEntityLogs.mock.calls.length).toBe(countAfterEnable);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: config panel
+// ---------------------------------------------------------------------------
+
+describe("LogsPanel - config panel", () => {
+  function openConfig() {
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+  }
+
+  it("getLogsConfiguration is called and fields render when config is opened", async () => {
+    const getLogsConfiguration = vi.fn().mockResolvedValue({
+      max_entries: 500,
+      severity_filter: "warning",
+    });
+    const client = makeClient({ getLogsConfiguration });
+    renderPanel(client);
+    await waitFor(() => expect(screen.queryByRole("status", { name: /loading/i })).not.toBeInTheDocument());
+
+    openConfig();
+
+    await waitFor(() => {
+      expect(getLogsConfiguration).toHaveBeenCalledWith("apps", "motor");
+      // saved severity select should show "warning"
+      const severitySelect = screen.getByLabelText(/saved severity/i);
+      expect(severitySelect).toHaveValue("warning");
+      // max entries input should show 500
+      const maxEntriesInput = screen.getByLabelText(/max entries/i);
+      expect(maxEntriesInput).toHaveValue(500);
+    });
+  });
+
+  it("Save triggers updateLogsConfiguration with current values", async () => {
+    const updateLogsConfiguration = vi.fn().mockResolvedValue(undefined);
+    const getLogsConfiguration = vi.fn().mockResolvedValue({ max_entries: 500, severity_filter: "error" });
+    const client = makeClient({ getLogsConfiguration, updateLogsConfiguration });
+    renderPanel(client);
+    await waitFor(() => expect(screen.queryByRole("status", { name: /loading/i })).not.toBeInTheDocument());
+
+    openConfig();
+    await waitFor(() => expect(screen.getByLabelText(/saved severity/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateLogsConfiguration).toHaveBeenCalledWith("apps", "motor", {
+        severity_filter: "error",
+        max_entries: 500,
+      });
+    });
+  });
+
+  it("max_entries null (unlimited) is preserved and sent as null on save", async () => {
+    const updateLogsConfiguration = vi.fn().mockResolvedValue(undefined);
+    const getLogsConfiguration = vi.fn().mockResolvedValue({ max_entries: null, severity_filter: "debug" });
+    const client = makeClient({ getLogsConfiguration, updateLogsConfiguration });
+    renderPanel(client);
+    await waitFor(() => expect(screen.queryByRole("status", { name: /loading/i })).not.toBeInTheDocument());
+
+    openConfig();
+    await waitFor(() => expect(screen.getByLabelText(/max entries/i)).toBeInTheDocument());
+
+    // Input should be empty (null = unlimited)
+    const maxEntriesInput = screen.getByLabelText(/max entries/i);
+    expect(maxEntriesInput).toHaveValue(null);
+    // "unlimited" hint should be visible
+    expect(screen.getByText(/unlimited/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateLogsConfiguration).toHaveBeenCalledWith("apps", "motor", {
+        severity_filter: "debug",
+        max_entries: null,
+      });
+    });
+  });
+
+  it("shows config error state when getLogsConfiguration fails", async () => {
+    const getLogsConfiguration = vi.fn().mockRejectedValue(new Error("Config fetch failed"));
+    const client = makeClient({ getLogsConfiguration });
+    renderPanel(client);
+    await waitFor(() => expect(screen.queryByRole("status", { name: /loading/i })).not.toBeInTheDocument());
+
+    openConfig();
+
+    await waitFor(() => {
+      expect(screen.getByText(/failed to load configuration/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 });
