@@ -331,7 +331,7 @@ export interface LogListXMedkit {
  * Schema: LogConfiguration { max_entries?: number | null, severity_filter?: string | null }
  */
 export interface LogConfiguration {
-  /** 1-10000 */
+  /** When set to a number, must be in range 1-10000. null clears the limit. */
   max_entries?: number | null;
   severity_filter?: string | null;
 }
