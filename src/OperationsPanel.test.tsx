@@ -1,6 +1,6 @@
 // Copyright 2024-2026 bburda. Apache-2.0 license.
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import { OperationsPanel } from "./OperationsPanel";
@@ -418,7 +418,7 @@ describe("OperationsPanel - service response display", () => {
 });
 
 describe("OperationsPanel - action response display", () => {
-  it("shows 'Execution created' message for an action response", async () => {
+  it("shows the action execution panel (status badge) after run", async () => {
     const client = makeClient([ACTION_OP], ACTION_RESPONSE);
     render(
       <OperationsPanel
@@ -432,8 +432,11 @@ describe("OperationsPanel - action response display", () => {
     fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
+    // T3: action response is now shown via ActionExecutionPanel (polling lifecycle).
+    // The panel renders an "action" badge and the execution id.
     await waitFor(() => {
-      expect(screen.getByText(/Execution created/)).toBeInTheDocument();
+      // execution id shown in the panel
+      expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
     });
   });
 
@@ -546,5 +549,366 @@ describe("OperationsPanel - keyboard accessibility", () => {
     const opBtn = screen.getByRole("button", { name: SERVICE_OP.name });
     fireEvent.keyDown(opBtn, { key: "Enter" });
     expect(screen.getByRole("button", { name: `Run ${SERVICE_OP.name}` })).toBeInTheDocument();
+  });
+});
+
+// =============================================================================
+// T3: Action polling lifecycle tests
+// =============================================================================
+
+/**
+ * Build a client stub for polling lifecycle tests.
+ * getExecution returns a sequence of responses (one per call index).
+ * cancelExecution resolves immediately.
+ */
+function makePollingClient(
+  pollSequence: Array<{ status: "pending" | "running" | "completed" | "failed"; parameters?: unknown }>,
+): MedkitApiClient & { getExecution: ReturnType<typeof vi.fn>; cancelExecution: ReturnType<typeof vi.fn> } {
+  let callIndex = 0;
+  const getExecution = vi.fn(async () => {
+    const resp = pollSequence[callIndex] ?? pollSequence[pollSequence.length - 1]!;
+    callIndex++;
+    return resp;
+  });
+  const cancelExecution = vi.fn(async () => undefined);
+
+  return {
+    listOperations: vi.fn().mockResolvedValue([ACTION_OP]),
+    createExecution: vi.fn().mockResolvedValue(ACTION_RESPONSE),
+    getExecution,
+    cancelExecution,
+  } as unknown as MedkitApiClient & { getExecution: ReturnType<typeof vi.fn>; cancelExecution: ReturnType<typeof vi.fn> };
+}
+
+describe("OperationsPanel - action polling lifecycle", () => {
+  beforeEach(() => {
+    // Only fake setInterval/clearInterval; leave setTimeout real so waitFor works.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts polling after run; shows status on each tick; stops at terminal", async () => {
+    const client = makePollingClient([
+      { status: "pending" },
+      { status: "running", parameters: { feedback: 42 } },
+      { status: "completed", parameters: { result: "done" } },
+    ]);
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+
+    // After run, ActionExecutionPanel is shown with initial status from createExecution
+    await waitFor(() => {
+      expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
+    });
+
+    // Tick 1: pending
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("pending")).toBeInTheDocument();
+    });
+    expect(client.getExecution).toHaveBeenCalledTimes(1);
+
+    // Tick 2: running + feedback
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("running")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/feedback/)).toBeInTheDocument();
+
+    // Tick 3: completed (terminal)
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("completed")).toBeInTheDocument();
+    });
+
+    const callCountAtTerminal = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // No more calls after terminal - advance more ticks
+    await act(async () => {
+      vi.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+    expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCountAtTerminal);
+  });
+
+  it("adds history entry when execution reaches terminal status", async () => {
+    const client = makePollingClient([
+      { status: "completed" },
+    ]);
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+
+    await waitFor(() => screen.getByText("exec-abc-123"));
+
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("completed")).toBeInTheDocument();
+    });
+
+    // History toggle button should appear
+    expect(screen.getByRole("button", { name: "Toggle execution history" })).toBeInTheDocument();
+  });
+});
+
+describe("OperationsPanel - action cancel", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("calls cancelExecution on Cancel click and stops polling", async () => {
+    const client = makePollingClient([
+      { status: "running" },
+      { status: "running" },
+    ]);
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+
+    await waitFor(() => screen.getByText("exec-abc-123"));
+
+    // Advance one tick so polling starts and Cancel button is visible
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel execution" })).toBeInTheDocument();
+    });
+
+    const callsBeforeCancel = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel execution" }));
+
+    await waitFor(() => {
+      expect(client.cancelExecution).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance more - no new getExecution calls
+    await act(async () => {
+      vi.advanceTimersByTime(2100);
+      await Promise.resolve();
+    });
+    const callsAfterCancel = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(callsAfterCancel).toBe(callsBeforeCancel);
+
+    // Status shown as canceled
+    await waitFor(() => {
+      expect(screen.getByText("canceled")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("OperationsPanel - action history", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("accumulates history entries across multiple runs", async () => {
+    const client = makePollingClient([
+      { status: "completed" },
+      { status: "failed" },
+    ]);
+    // Override createExecution to return different ids per run
+    let runCount = 0;
+    (client.createExecution as ReturnType<typeof vi.fn>) = vi.fn(async () => ({
+      id: `exec-${runCount++}`,
+      status: "pending",
+      kind: "action",
+    }));
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+
+    // Run 1
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+    await waitFor(() => screen.getByText("exec-0"));
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => screen.getByText("completed"));
+
+    // Run 2
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+    await waitFor(() => screen.getByText("exec-1"));
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => screen.getByText("failed"));
+
+    // History should have 2 entries
+    const historyBtn = screen.getByRole("button", { name: "Toggle execution history" });
+    expect(historyBtn.textContent).toContain("2");
+  });
+});
+
+describe("OperationsPanel - lifecycle hygiene (unmount stops polling)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops calling getExecution after unmount", async () => {
+    const client = makePollingClient([
+      { status: "running" },
+      { status: "running" },
+      { status: "running" },
+    ]);
+
+    const { unmount } = render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+
+    await waitFor(() => screen.getByText("exec-abc-123"));
+
+    // One tick to establish polling
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => expect(client.getExecution).toHaveBeenCalledTimes(1));
+    const callsBeforeUnmount = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    unmount();
+
+    // Advance more ticks - no new calls
+    await act(async () => { vi.advanceTimersByTime(3100); await Promise.resolve(); });
+    expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBeforeUnmount);
+  });
+});
+
+describe("OperationsPanel - entity change stops polling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops calling getExecution when entityId changes", async () => {
+    const client = makePollingClient([
+      { status: "running" },
+      { status: "running" },
+    ]);
+
+    const { rerender } = render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+
+    await waitFor(() => screen.getByText("exec-abc-123"));
+
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => expect(client.getExecution).toHaveBeenCalledTimes(1));
+    const callsBeforeRerender = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // Change entity - should stop polling
+    rerender(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a2"
+        theme={THEME}
+      />,
+    );
+
+    await act(async () => { vi.advanceTimersByTime(2100); await Promise.resolve(); });
+    expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBeforeRerender);
+  });
+});
+
+describe("OperationsPanel - service still sync (no polling)", () => {
+  it("does not call getExecution for a service operation", async () => {
+    const getExecution = vi.fn();
+    const client: MedkitApiClient = {
+      listOperations: vi.fn().mockResolvedValue([SERVICE_OP]),
+      createExecution: vi.fn().mockResolvedValue(SERVICE_RESPONSE),
+      getExecution,
+    } as unknown as MedkitApiClient;
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="components"
+        entityId="c1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: SERVICE_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: SERVICE_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${SERVICE_OP.name}` }));
+
+    await waitFor(() => {
+      // Service result shown
+      expect(screen.getByText(/success/)).toBeInTheDocument();
+    });
+
+    expect(getExecution).not.toHaveBeenCalled();
   });
 });
