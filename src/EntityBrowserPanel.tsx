@@ -19,10 +19,10 @@ import { type GatewayConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
+import { ConfigurationsPanel } from "./ConfigurationsPanel";
 import type {
   SovdEntity,
   ComponentTopic,
-  Parameter,
   Fault,
   App,
   SovdResourceEntityType,
@@ -85,7 +85,6 @@ function EntityBrowserPanel({
 
   // Tab data
   const [topics, setTopics] = useState<ComponentTopic[]>([]);
-  const [configs, setConfigs] = useState<Parameter[]>([]);
   const [faults, setFaults] = useState<Fault[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
@@ -240,18 +239,15 @@ function EntityBrowserPanel({
       setTabLoading(true);
       setTabError(undefined);
       setTopics([]);
-      setConfigs([]);
       setFaults([]);
       setApps([]);
 
       try {
-        const [dataRes, cfgRes, faultsRes] = await Promise.all([
+        const [dataRes, faultsRes] = await Promise.all([
           client.listEntityData(eType, entity.id).catch(() => [] as ComponentTopic[]),
-          client.listConfigurations(eType, entity.id).catch(() => ({ parameters: [] as Parameter[] })),
           client.listEntityFaults(eType, entity.id).catch(() => ({ items: [] as Fault[] })),
         ]);
         setTopics(dataRes);
-        setConfigs(cfgRes.parameters);
         setFaults(faultsRes.items);
 
         if (entity.type === "component") {
@@ -376,14 +372,12 @@ function EntityBrowserPanel({
                 theme={theme}
               />
             )}
-            {!tabLoading && activeTab === "configurations" && (
-              <ConfigurationsTab
-                configs={configs}
-                entityId={selected.id}
-                entityType={selectedType}
+            {activeTab === "configurations" && client != null && (
+              <ConfigurationsPanel
                 client={client}
+                entityType={selectedType}
+                entityId={selected.id}
                 theme={theme}
-                onRefresh={() => void selectEntity(selected)}
               />
             )}
             {!tabLoading && activeTab === "faults" && (
@@ -531,128 +525,6 @@ function DataTab({ topics, theme }: { topics: ComponentTopic[]; theme: Theme }):
               {t.isPublisher && <span style={S.badge("#fff", c.success)}>pub</span>}
               {t.isSubscriber && (
                 <span style={{ ...S.badge("#fff", c.info), marginLeft: 2 }}>sub</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tab: Configurations
-// ---------------------------------------------------------------------------
-
-function ConfigurationsTab({
-  configs,
-  entityId,
-  entityType,
-  client,
-  theme,
-  onRefresh,
-}: {
-  configs: Parameter[];
-  entityId: string;
-  entityType: SovdResourceEntityType;
-  client: MedkitApiClient | null;
-  theme: Theme;
-  onRefresh: () => void;
-}): ReactElement {
-  const c = S.colors(theme);
-  const [editingParam, setEditingParam] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const saveParam = useCallback(
-    async (name: string) => {
-      if (!client) return;
-      setSaving(true);
-      try {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(editValue);
-        } catch {
-          parsed = editValue;
-        }
-        await client.setConfiguration(entityType, entityId, name, parsed);
-        setEditingParam(null);
-        onRefresh();
-      } catch {
-        // Error handled silently in extension context
-      } finally {
-        setSaving(false);
-      }
-    },
-    [client, entityType, entityId, editValue, onRefresh],
-  );
-
-  if (configs.length === 0) return <div style={S.emptyState(theme)}>No configurations</div>;
-
-  return (
-    <table style={S.table(theme)}>
-      <thead>
-        <tr>
-          <th style={S.th(theme)}>Parameter</th>
-          <th style={S.th(theme)}>Value</th>
-          <th style={S.th(theme)}>Type</th>
-          <th style={S.th(theme)}>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {configs.map((p) => (
-          <tr key={p.name}>
-            <td style={S.td(theme)}>
-              {p.name}
-              {p.read_only && <span style={{ ...S.badge(c.textMuted, c.bgAlt), marginLeft: 4 }}>🔒</span>}
-            </td>
-            <td style={S.td(theme)}>
-              {editingParam === p.name ? (
-                <div style={{ display: "flex", gap: 4 }}>
-                  <input
-                    style={{ ...S.input(theme), flex: 1 }}
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void saveParam(p.name);
-                      if (e.key === "Escape") setEditingParam(null);
-                    }}
-                    autoFocus
-                  />
-                  <button
-                    style={S.btn(theme)}
-                    disabled={saving}
-                    onClick={() => void saveParam(p.name)}
-                  >
-                    ✓
-                  </button>
-                  <button
-                    style={S.btn(theme, "ghost")}
-                    onClick={() => setEditingParam(null)}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ) : (
-                <code style={{ fontSize: 11, color: c.accent }}>
-                  {JSON.stringify(p.value)}
-                </code>
-              )}
-            </td>
-            <td style={S.td(theme)}>
-              <span style={S.badge(c.textMuted, c.bgAlt)}>{p.type}</span>
-            </td>
-            <td style={S.td(theme)}>
-              {!p.read_only && editingParam !== p.name && (
-                <button
-                  style={S.btn(theme, "ghost")}
-                  onClick={() => {
-                    setEditingParam(p.name);
-                    setEditValue(JSON.stringify(p.value));
-                  }}
-                >
-                  ✏️ Edit
-                </button>
               )}
             </td>
           </tr>
