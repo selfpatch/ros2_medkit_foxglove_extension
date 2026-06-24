@@ -4,7 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import { ServerInfoPanelView } from "./ServerInfoPanel";
-import type { RootOverview } from "./types";
+import type { RootOverview, VersionInfo } from "./types";
 
 const BASE = "http://gw/api/v1";
 
@@ -29,6 +29,35 @@ function buildFetch(path: string, data: unknown, status = 200): typeof fetch {
         return jsonResponse({ message: "not found" }, 404);
     }) as unknown as typeof fetch;
 }
+
+/** Build a fetch stub that serves GET / with rootData and GET /version-info with viData. */
+function buildMultiFetch(rootData: unknown, viData: unknown | "error"): typeof fetch {
+    return vi.fn(async (input: RequestInfo | URL) => {
+        const url = (input instanceof Request ? input.url : input.toString());
+        // version-info path
+        if (url === BASE + "/version-info" || url === BASE + "/version-info/") {
+            if (viData === "error") {
+                return jsonResponse({ message: "not found" }, 404);
+            }
+            return jsonResponse(viData);
+        }
+        // root path
+        if (url === BASE + "/" || url === BASE) {
+            return jsonResponse(rootData);
+        }
+        return jsonResponse({ message: "not found" }, 404);
+    }) as unknown as typeof fetch;
+}
+
+const VERSION_INFO: VersionInfo = {
+    items: [
+        {
+            version: "1.0.0-sovd",
+            base_uri: "/api/v1",
+            vendor_info: { name: "ros2_medkit", version: "2.3.0" },
+        },
+    ],
+};
 
 const FULL_OVERVIEW: RootOverview = {
     name: "ros2_medkit Gateway",
@@ -163,5 +192,33 @@ describe("ServerInfoPanelView", () => {
             expect(screen.getByText("Supported Features")).toBeInTheDocument();
             expect(screen.getByText("API Entry Points")).toBeInTheDocument();
         });
+    });
+
+    it("renders SOVD version and base URI from version-info in the overview", async () => {
+        const f = buildMultiFetch(FULL_OVERVIEW, VERSION_INFO);
+        render(<ServerInfoPanelView baseUrl={BASE} fetchImpl={f} />);
+        await waitFor(() => {
+            // SOVD/api version from version-info (distinct from implementation version)
+            expect(screen.getByText("SOVD Version")).toBeInTheDocument();
+            expect(screen.getByText("1.0.0-sovd")).toBeInTheDocument();
+            // base_uri from version-info
+            expect(screen.getByText("Base URI")).toBeInTheDocument();
+        });
+        // Implementation version from getRoot still shown
+        expect(screen.getByText("1.0.0")).toBeInTheDocument();
+    });
+
+    it("still renders getRoot data when version-info errors (non-fatal)", async () => {
+        const f = buildMultiFetch(FULL_OVERVIEW, "error");
+        render(<ServerInfoPanelView baseUrl={BASE} fetchImpl={f} />);
+        await waitFor(() => {
+            // getRoot fields rendered as usual
+            expect(screen.getByText("ros2_medkit Gateway")).toBeInTheDocument();
+            expect(screen.getByText("1.0.0")).toBeInTheDocument();
+            expect(screen.getByText("/api/v1")).toBeInTheDocument();
+        });
+        // SOVD version label absent when version-info unavailable
+        expect(screen.queryByText("SOVD Version")).not.toBeInTheDocument();
+        expect(screen.queryByText("Base URI")).not.toBeInTheDocument();
     });
 });

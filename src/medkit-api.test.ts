@@ -311,6 +311,10 @@ describe("MedkitApiClient.getRoot", () => {
         stubFetch(overview);
         const client = new MedkitApiClient("http://gw", "api/v1");
         const result = await client.getRoot();
+        // Verify getRoot hits the root path (GET /) - not an accidental sub-path
+        const calledUrl = vi.mocked(fetch).mock.calls[0][0];
+        const calledPath = typeof calledUrl === "string" ? calledUrl : (calledUrl as Request).url;
+        expect(calledPath.replace(/\/$/, "")).toBe("http://gw/api/v1");
         expect(result.name).toBe("ros2_medkit Gateway");
         expect(result.version).toBe("1.0.0");
         expect(result.api_base).toBe("/api/v1");
