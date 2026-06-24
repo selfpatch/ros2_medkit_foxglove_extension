@@ -3,15 +3,8 @@
 // LogsPanel: query an entity's logs with severity filter + context search,
 // expandable rows (context.function / context.file:line + full ISO timestamp),
 // aggregation header from x-medkit metadata, display cap (200 rows) with
-// show-all overflow control, 404/503 no-LogManager fallback, manual Refresh.
-//
-// Filter approach: server-side params (severity + context) via listEntityLogs,
-// plus client-side message search applied to the returned result set. This
-// matches the web_ui approach: the severity + context filters are sent as query
-// params to the gateway; message text search is local because the gateway
-// does not expose a message-content filter.
-//
-// Auto-refresh / visibility-pause is T3. Only a manual Refresh button here.
+// show-all overflow control, 404/503 no-LogManager fallback, manual Refresh,
+// and auto-refresh with document-visibility pause.
 
 import { type ReactElement, Fragment, useCallback, useEffect, useState } from "react";
 
@@ -86,6 +79,13 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   // ── Display cap ──────────────────────────────────────────────────
   const [showAll, setShowAll] = useState(false);
 
+  // ── Auto-refresh ─────────────────────────────────────────────────
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(5000);
+  const [isDocumentVisible, setIsDocumentVisible] = useState(
+    typeof document === "undefined" ? true : document.visibilityState === "visible",
+  );
+
   // ── Config panel ─────────────────────────────────────────────────
   const [configOpen, setConfigOpen] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -114,6 +114,8 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
     setMessageSearch("");
     setExpandedIds(new Set());
     setShowAll(false);
+    setAutoRefreshEnabled(false);
+    setRefreshIntervalMs(5000);
     setConfigOpen(false);
     setConfigLoaded(false);
     setConfigLoading(false);
@@ -153,6 +155,36 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   useEffect(() => {
     void doFetch();
   }, [doFetch]);
+
+  // ── Visibility tracking ──────────────────────────────────────────
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      setIsDocumentVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  // ── Auto-refresh interval ────────────────────────────────────────
+  // Fires doFetch on a setInterval when auto-refresh is enabled and the
+  // document is visible. Clears the interval (and removes no listener here -
+  // the visibility listener is managed by the effect above) on:
+  //   - auto-refresh toggled off
+  //   - document becomes hidden (isDocumentVisible false)
+  //   - entity/filter change (doFetch identity changes -> effect re-runs)
+  //   - unmount
+  // When the document becomes visible again (and auto-refresh is still on),
+  // the effect re-runs, sets up a fresh interval, and immediately calls
+  // doFetch so the view is current.
+  useEffect(() => {
+    if (!autoRefreshEnabled || !isDocumentVisible) return;
+    void doFetch();
+    const id = setInterval(() => {
+      void doFetch();
+    }, refreshIntervalMs);
+    return () => clearInterval(id);
+  }, [autoRefreshEnabled, isDocumentVisible, refreshIntervalMs, doFetch]);
 
   // ── Row expand toggle ────────────────────────────────────────────
   const toggleExpand = useCallback((id: string) => {
@@ -255,6 +287,30 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
       >
         ↻ Refresh
       </button>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+        <input
+          type="checkbox"
+          aria-label="Auto-refresh"
+          checked={autoRefreshEnabled}
+          onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+        />
+        <span style={{ color: c.textMuted }}>Auto-refresh</span>
+      </label>
+      {autoRefreshEnabled && (
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <span style={{ color: c.textMuted }}>Interval:</span>
+          <select
+            aria-label="Refresh interval"
+            style={{ ...S.input(theme), width: "auto", padding: "2px 6px" }}
+            value={refreshIntervalMs}
+            onChange={(e) => setRefreshIntervalMs(Number(e.target.value))}
+          >
+            <option value={5000}>5s</option>
+            <option value={10000}>10s</option>
+            <option value={30000}>30s</option>
+          </select>
+        </label>
+      )}
       <button
         style={S.btn(theme, "ghost")}
         onClick={() => void toggleConfig()}
