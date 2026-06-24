@@ -204,6 +204,12 @@ describe("convertJsonSchemaToTopicSchema", () => {
         expect(convertJsonSchemaToTopicSchema(already)).toEqual(already);
     });
 
+    it("returns an empty schema for an opaque object schema (type:object, no properties)", () => {
+        // A bare { type: "object" } carries no fields; it must NOT render as a
+        // form field literally labeled "type".
+        expect(convertJsonSchemaToTopicSchema({ type: "object" })).toEqual({});
+    });
+
     it("handles twist-like schema (geometry_msgs/msg/Twist)", () => {
         const twistSchema = {
             type: "object",
@@ -322,9 +328,10 @@ describe("getDefaultValue - structural defaults", () => {
         expect(getDefaultValue(schema)).toEqual([]);
     });
 
-    it("returns empty string for object type without fields (unknown/opaque)", () => {
-        // object type with no fields -> falls through to string default
-        expect(getDefaultValue({ type: "object" })).toBe("");
+    it("returns an empty object for object type without fields (unknown/opaque)", () => {
+        // object type with no fields -> structural empty object so the JSON
+        // fallback input seeds with {} rather than "".
+        expect(getDefaultValue({ type: "object" })).toEqual({});
     });
 
     it("recursively builds nested object defaults", () => {
