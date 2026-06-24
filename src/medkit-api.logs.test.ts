@@ -295,6 +295,62 @@ describe("MedkitApiClient.listEntityLogs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// MedkitApiClient.listEntityLogs - severity normalization
+// ---------------------------------------------------------------------------
+
+describe("MedkitApiClient.listEntityLogs - severity normalization", () => {
+  it.each([
+    // Gateway canonical (already lowercase) - pass through unchanged
+    ["error", "error"],
+    ["warning", "warning"],
+    ["info", "info"],
+    ["debug", "debug"],
+    ["fatal", "fatal"],
+    // Gateway may send uppercase (normalize to lowercase)
+    ["ERROR", "error"],
+    ["WARNING", "warning"],
+    ["INFO", "info"],
+    ["DEBUG", "debug"],
+    ["FATAL", "fatal"],
+  ] as [string, string][])(
+    "severity=%j is lowercased to %j",
+    async (rawSeverity, expectedSeverity) => {
+      stubFetch({
+        items: [
+          {
+            id: "s1",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            severity: rawSeverity,
+            message: "test",
+            context: { node: "n" },
+          },
+        ],
+      });
+      const client = new MedkitApiClient("http://gw", "api/v1");
+      const result = await client.listEntityLogs("apps", "motor");
+      expect(result.items[0]!.severity).toBe(expectedSeverity);
+    },
+  );
+
+  it("uses 'info' fallback when severity is null/missing", async () => {
+    stubFetch({
+      items: [
+        {
+          id: "s2",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          // severity absent
+          message: "test",
+          context: { node: "n" },
+        },
+      ],
+    });
+    const client = new MedkitApiClient("http://gw", "api/v1");
+    const result = await client.listEntityLogs("apps", "motor");
+    expect(result.items[0]!.severity).toBe("info");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // MedkitApiClient.getLogsConfiguration
 // ---------------------------------------------------------------------------
 
