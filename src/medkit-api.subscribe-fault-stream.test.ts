@@ -214,6 +214,50 @@ describe("MedkitApiClient.subscribeFaultStream", () => {
         expect(errors[0]).toBe(boom);
     });
 
+    it("onError is NOT called when unsub() fires before the iterator throws", async () => {
+        // Gate the throw behind a promise; unsub() fires before we resolve it.
+        let releaseThrow!: () => void;
+        const throwGate = new Promise<void>((r) => { releaseThrow = r; });
+
+        let streamClosed = false;
+        mockFaults = () => ({
+            close() { streamClosed = true; },
+            [Symbol.asyncIterator](): AsyncIterator<SseEvent> {
+                return {
+                    async next() {
+                        await throwGate;
+                        if (streamClosed) {
+                            return { done: true, value: undefined as unknown as SseEvent };
+                        }
+                        throw new Error("late error after unsub");
+                    },
+                    async return() {
+                        streamClosed = true;
+                        return { done: true, value: undefined as unknown as SseEvent };
+                    },
+                };
+            },
+        });
+
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        const errors: unknown[] = [];
+
+        const unsub = client.subscribeFaultStream(
+            () => { /* onConfirmed */ },
+            () => { /* onCleared */ },
+            (e) => errors.push(e),
+        );
+
+        // Unsubscribe BEFORE the iterator throws.
+        unsub();
+
+        // Now release the throw; the guard must suppress onError.
+        releaseThrow();
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+        expect(errors).toHaveLength(0);
+    });
+
     it("fault data wrapped in .fault envelope is unwrapped before transform", async () => {
         mockFaults = () => makeStreamStub([
             { event: "fault_confirmed", data: { fault: RAW_FAULT } },
