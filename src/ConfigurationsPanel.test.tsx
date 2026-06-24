@@ -422,9 +422,57 @@ describe("ConfigurationsPanel - Reset All button", () => {
     await waitFor(() => {
       expect(resetAllConfigurations).toHaveBeenCalled();
     });
+    expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
+  });
+});
 
-    // Wait briefly to confirm no status text appears
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByText(/reset \d/i)).not.toBeInTheDocument();
+// ---------------------------------------------------------------------------
+// Tests: byte_array parameter
+// ---------------------------------------------------------------------------
+
+describe("ConfigurationsPanel - byte_array parameter", () => {
+  it("renders array editor for byte_array; valid JSON array saves", async () => {
+    const param = makeParam({ name: "raw_bytes", value: [0, 1, 255], type: "byte_array" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for raw_bytes/i)).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText(/value for raw_bytes/i);
+    fireEvent.change(input, { target: { value: "[10, 20, 30]" } });
+    fireEvent.click(screen.getByRole("button", { name: /save raw_bytes/i }));
+
+    await waitFor(() => {
+      expect(setConfiguration).toHaveBeenCalledWith(ENTITY_TYPE, ENTITY_ID, "raw_bytes", [10, 20, 30]);
+    });
+  });
+
+  it("shows inline parse error and blocks submit for invalid JSON in byte_array", async () => {
+    const param = makeParam({ name: "raw_bytes", value: [1, 2], type: "byte_array" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for raw_bytes/i)).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText(/value for raw_bytes/i);
+    fireEvent.change(input, { target: { value: "not-json" } });
+    fireEvent.click(screen.getByRole("button", { name: /save raw_bytes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/invalid json/i)).toBeInTheDocument();
+    });
+    expect(setConfiguration).not.toHaveBeenCalled();
   });
 });

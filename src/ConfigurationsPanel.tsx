@@ -69,11 +69,13 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // Sync input when param value changes (e.g. after reload)
+  // Sync input when param value changes (e.g. after reload).
+  // Depend on primitives only so an unrelated parent re-render that passes a
+  // new `param` object reference (same name/value) does NOT wipe an in-progress edit.
   useEffect(() => {
     setInputValue(defaultInputValue(param));
     setParseError(null);
-  }, [param]);
+  }, [param.name, param.value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = useCallback(async () => {
     setSaving(true);
