@@ -283,6 +283,60 @@ export interface BulkDataList {
 }
 
 // =============================================================================
+// Logs
+// =============================================================================
+
+export type LogSeverity = "debug" | "info" | "warning" | "error" | "fatal";
+
+/** Source location carried per log entry under context. */
+export interface LogContext {
+  /** Logger FQN, e.g. "powertrain/engine/temp_sensor" */
+  node: string;
+  file?: string;
+  function?: string;
+  line?: number;
+}
+
+/**
+ * Single log entry as returned by GET .../logs.
+ * Schema: LogEntry { id, timestamp (ISO 8601), severity (string), message, context? }
+ */
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  severity: LogSeverity;
+  message: string;
+  context: LogContext;
+}
+
+/**
+ * Aggregation metadata carried in the x-medkit field of a LogEntryList response.
+ * Populated by area/component/function log aggregation in the gateway.
+ */
+export interface LogListXMedkit {
+  entity_id?: string;
+  aggregation_level?: "function" | "area" | "component";
+  aggregated?: boolean;
+  aggregation_sources?: string[];
+  host_count?: number;
+  component_count?: number;
+  app_count?: number;
+  partial?: boolean;
+  contributors?: string[];
+  failed_peers?: string[];
+}
+
+/**
+ * Log configuration for an entity (GET/PUT .../logs/configuration).
+ * Schema: LogConfiguration { max_entries?: number | null, severity_filter?: string | null }
+ */
+export interface LogConfiguration {
+  /** 1-10000 */
+  max_entries?: number | null;
+  severity_filter?: string | null;
+}
+
+// =============================================================================
 // Server Info
 // =============================================================================
 

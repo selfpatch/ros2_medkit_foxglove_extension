@@ -25,6 +25,9 @@ import type {
   FaultResponse,
   BulkDataCategory,
   BulkDataList,
+  LogEntry,
+  LogListXMedkit,
+  LogConfiguration,
 } from "./types";
 
 export type { OperationExecution };
@@ -48,7 +51,11 @@ import {
   getEntityFault,
   getEntityBulkDataCategories,
   getEntityBulkDataDescriptors,
+  getEntityLogs as dispatchGetEntityLogs,
+  getEntityLogsConfiguration as dispatchGetEntityLogsConfiguration,
+  putEntityLogsConfiguration as dispatchPutEntityLogsConfiguration,
 } from "./api-dispatch";
+import type { EntityLogsParams } from "./api-dispatch";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -550,6 +557,78 @@ export class MedkitApiClient {
     // Strip the leading slash and join onto the same resolved base the typed
     // client uses, so the download root always matches the API request root.
     return `${this.resolvedBase}/${bulkDataUri.replace(/^\//, "")}`;
+  }
+
+  // ── Logs ──────────────────────────────────────────────────────────
+
+  /**
+   * List log entries for an entity.
+   *
+   * The schema marks the query params as `never` but the gateway accepts
+   * `severity` and `context` at runtime; they are passed through a plain
+   * Record so TypeScript types do not conflict.
+   *
+   * Throws on non-2xx via throwApiError so the panel can branch on status
+   * (e.g. 404/503 = no LogManager).
+   */
+  async listEntityLogs(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    params?: EntityLogsParams,
+  ): Promise<{ items: LogEntry[]; "x-medkit"?: LogListXMedkit }> {
+    interface RawCollection {
+      items?: unknown[];
+      "x-medkit"?: LogListXMedkit | null;
+    }
+    interface RawEntry {
+      id: string;
+      timestamp: string;
+      severity: string;
+      message: string;
+      context?: { node: string; file?: string; function?: string; line?: number } | null;
+    }
+    const { data, error } = await dispatchGetEntityLogs(this.client, entityType, entityId, params);
+    if (error) throwApiError(error);
+    const raw = data as unknown as RawCollection;
+    const items: LogEntry[] = (raw.items ?? []).map((e) => {
+      const entry = e as RawEntry;
+      return {
+        id: entry.id,
+        timestamp: entry.timestamp,
+        severity: (entry.severity?.toLowerCase() ?? "info") as LogEntry["severity"],
+        message: entry.message,
+        context: entry.context ?? { node: "unknown" },
+      };
+    });
+    const result: { items: LogEntry[]; "x-medkit"?: LogListXMedkit } = { items };
+    if (raw["x-medkit"]) result["x-medkit"] = raw["x-medkit"];
+    return result;
+  }
+
+  /**
+   * Get log configuration (severity_filter, max_entries) for an entity.
+   * Throws on error; 404/503 = no LogManager.
+   */
+  async getLogsConfiguration(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+  ): Promise<LogConfiguration> {
+    const { data, error } = await dispatchGetEntityLogsConfiguration(this.client, entityType, entityId);
+    if (error) throwApiError(error);
+    return data as unknown as LogConfiguration;
+  }
+
+  /**
+   * Update log configuration for an entity (PUT .../logs/configuration, 204).
+   * Throws on error.
+   */
+  async updateLogsConfiguration(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    config: LogConfiguration,
+  ): Promise<void> {
+    const { error } = await dispatchPutEntityLogsConfiguration(this.client, entityType, entityId, config);
+    if (error) throwApiError(error);
   }
 
   /**
