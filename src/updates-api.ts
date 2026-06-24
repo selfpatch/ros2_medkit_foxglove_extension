@@ -4,6 +4,8 @@
 // canonical implementation in ros2_medkit_web_ui's `lib/updates-api.ts` so
 // the Foxglove panel and the web UI stay structurally identical.
 
+import { createMedkitClient, isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
+
 export class UpdatesApiError extends Error {
     readonly status: number;
 
@@ -21,33 +23,22 @@ export interface UpdateStatus {
     [extension: string]: unknown;
 }
 
-async function ensureOk(res: Response): Promise<void> {
-    if (res.ok) return;
-    let message = `HTTP ${res.status}`;
-    try {
-        // Read as text first so a non-JSON error body (plain text / HTML
-        // from a proxy) is still surfaced instead of dropped to "HTTP <n>".
-        const text = await res.text();
-        if (text) {
-            try {
-                const body = JSON.parse(text) as { message?: unknown };
-                message =
-                    typeof body.message === "string" && body.message
-                        ? body.message
-                        : text.slice(0, 500);
-            } catch {
-                message = text.slice(0, 500);
-            }
-        }
-    } catch {
-        // ignore body read errors
+/** Throw an UpdatesApiError from the typed client's error value.
+ *
+ * The typed client's errorMiddleware transforms all non-2xx responses into a
+ * MedkitError object (with `.status`, `.message`, `.error_code`). We re-wrap
+ * it as UpdatesApiError so callers (UpdatesPanel) only have to deal with one
+ * error type and can branch on `.status` (501 -> notAvailable, 404 -> ready,
+ * 0 -> invalid status response). A raw MedkitApiError must never escape. */
+function throwFromClientError(error: unknown): never {
+    if (isMedkitError(error)) {
+        throw new UpdatesApiError(error.message, error.status);
     }
-    throw new UpdatesApiError(message, res.status);
-}
-
-function updatePath(baseUrl: string, id: string, suffix?: string): string {
-    const encoded = encodeURIComponent(id);
-    return suffix ? `${baseUrl}/updates/${encoded}/${suffix}` : `${baseUrl}/updates/${encoded}`;
+    const msg =
+        typeof error === "object" && error !== null && "message" in error
+            ? String((error as { message: unknown }).message)
+            : String(error);
+    throw new UpdatesApiError(msg, 0);
 }
 
 /** GET /updates - returns list of update IDs (SOVD: `{items: [<id>]}`). */
@@ -56,14 +47,15 @@ export async function fetchUpdateIds(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<string[]> {
-    const res = await fetchImpl(`${baseUrl}/updates`, { signal });
-    await ensureOk(res);
-    const data = (await res.json()) as { items?: unknown };
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { data, error } = await client.GET("/updates", { signal });
+    if (error) throwFromClientError(error);
     // Accept both the SOVD `{items: [<id string>]}` shape and gateways that
     // return `{items: [{id, ...}]}` objects; anything else is dropped so a
     // malformed item never reaches the panel's `id.localeCompare` sort.
-    if (!Array.isArray(data?.items)) return [];
-    return (data.items as unknown[])
+    const items = (data as unknown as { items?: unknown })?.items;
+    if (!Array.isArray(items)) return [];
+    return (items as unknown[])
         .map((it): string | undefined => {
             if (typeof it === "string") return it;
             if (it && typeof it === "object" && typeof (it as { id?: unknown }).id === "string") {
@@ -81,19 +73,23 @@ export async function fetchUpdateStatus(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<UpdateStatus> {
-    const res = await fetchImpl(updatePath(baseUrl, id, "status"), { signal });
-    await ensureOk(res);
-    const data = (await res.json()) as Partial<UpdateStatus>;
-    if (typeof data?.status !== "string") {
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { data, error } = await client.GET("/updates/{update_id}/status", {
+        params: { path: { update_id: id } },
+        signal,
+    });
+    if (error) throwFromClientError(error);
+    const raw = data as unknown as Partial<UpdateStatus>;
+    if (typeof raw?.status !== "string") {
         throw new UpdatesApiError("Invalid status response", 0);
     }
     // `status` is the only field we hard-require; drop a non-numeric
     // `progress` so the panel never renders `NaN%` / a bogus aria-valuenow
     // from a non-conformant gateway.
-    if (data.progress !== undefined && typeof data.progress !== "number") {
-        delete data.progress;
+    if (raw.progress !== undefined && typeof raw.progress !== "number") {
+        delete raw.progress;
     }
-    return data as UpdateStatus;
+    return raw as UpdateStatus;
 }
 
 /** GET /updates/{id} - returns full plugin-defined detail. Untyped because
@@ -105,60 +101,13 @@ export async function fetchUpdateDetail(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-    const res = await fetchImpl(updatePath(baseUrl, id), { signal });
-    await ensureOk(res);
-    return (await res.json()) as Record<string, unknown>;
-}
-
-/** PUT /updates/{id}/prepare - start preparation (202 Accepted). */
-export async function triggerPrepare(
-    baseUrl: string,
-    id: string,
-    body?: unknown,
-    fetchImpl: typeof fetch = fetch,
-    signal?: AbortSignal,
-): Promise<void> {
-    const res = await fetchImpl(updatePath(baseUrl, id, "prepare"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body ?? {}),
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { data, error } = await client.GET("/updates/{update_id}", {
+        params: { path: { update_id: id } },
         signal,
     });
-    await ensureOk(res);
-}
-
-/** PUT /updates/{id}/execute - start execution (202 Accepted). */
-export async function triggerExecute(
-    baseUrl: string,
-    id: string,
-    body?: unknown,
-    fetchImpl: typeof fetch = fetch,
-    signal?: AbortSignal,
-): Promise<void> {
-    const res = await fetchImpl(updatePath(baseUrl, id, "execute"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body ?? {}),
-        signal,
-    });
-    await ensureOk(res);
-}
-
-/** PUT /updates/{id}/automated - prepare+execute combined (202 Accepted). */
-export async function triggerAutomated(
-    baseUrl: string,
-    id: string,
-    body?: unknown,
-    fetchImpl: typeof fetch = fetch,
-    signal?: AbortSignal,
-): Promise<void> {
-    const res = await fetchImpl(updatePath(baseUrl, id, "automated"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body ?? {}),
-        signal,
-    });
-    await ensureOk(res);
+    if (error) throwFromClientError(error);
+    return data as unknown as Record<string, unknown>;
 }
 
 /** POST /updates - register a new update package (201 Created). The body
@@ -171,13 +120,67 @@ export async function registerUpdate(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<void> {
-    const res = await fetchImpl(`${baseUrl}/updates`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(metadata),
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    // UpdateRegisterRequest schema is `{[key: string]: unknown}` - cast through
+    // unknown to satisfy the typed body parameter.
+    const { error } = await client.POST("/updates", {
+        body: metadata as unknown as Record<string, never>,
         signal,
     });
-    await ensureOk(res);
+    if (error) throwFromClientError(error);
+}
+
+/** PUT /updates/{id}/prepare - start preparation (202 Accepted).
+ * The body param is accepted for API compatibility; the SOVD schema for this
+ * endpoint defines no requestBody so the typed client takes no body. */
+export async function triggerPrepare(
+    baseUrl: string,
+    id: string,
+    body?: unknown,
+    fetchImpl: typeof fetch = fetch,
+    signal?: AbortSignal,
+): Promise<void> {
+    void body; // schema has no requestBody for this verb
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { error } = await client.PUT("/updates/{update_id}/prepare", {
+        params: { path: { update_id: id } },
+        signal,
+    });
+    if (error) throwFromClientError(error);
+}
+
+/** PUT /updates/{id}/execute - start execution (202 Accepted). */
+export async function triggerExecute(
+    baseUrl: string,
+    id: string,
+    body?: unknown,
+    fetchImpl: typeof fetch = fetch,
+    signal?: AbortSignal,
+): Promise<void> {
+    void body;
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { error } = await client.PUT("/updates/{update_id}/execute", {
+        params: { path: { update_id: id } },
+        signal,
+    });
+    if (error) throwFromClientError(error);
+}
+
+/** PUT /updates/{id}/automated - prepare+execute combined (202 Accepted). */
+export async function triggerAutomated(
+    baseUrl: string,
+    id: string,
+    body?: unknown,
+    fetchImpl: typeof fetch = fetch,
+    signal?: AbortSignal,
+): Promise<void> {
+    void body;
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { error } = await client.PUT("/updates/{update_id}/automated", {
+        params: { path: { update_id: id } },
+        signal,
+    });
+    if (error) throwFromClientError(error);
 }
 
 /** DELETE /updates/{id} - remove the update package (204 No Content). */
@@ -187,6 +190,10 @@ export async function deleteUpdate(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<void> {
-    const res = await fetchImpl(updatePath(baseUrl, id), { method: "DELETE", signal });
-    await ensureOk(res);
+    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const { error } = await client.DELETE("/updates/{update_id}", {
+        params: { path: { update_id: id } },
+        signal,
+    });
+    if (error) throwFromClientError(error);
 }
