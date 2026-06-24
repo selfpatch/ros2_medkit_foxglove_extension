@@ -1,6 +1,6 @@
 // Copyright 2026 bburda. Apache-2.0 license.
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import { EntityBrowserTabBar } from "./EntityBrowserPanel";
@@ -99,14 +99,14 @@ function renderTabBar({
 }
 
 // ---------------------------------------------------------------------------
-// Tests: data tab always shown
+// Tests: data tab shown when the data_access capability is enabled
 // ---------------------------------------------------------------------------
 
 describe("EntityBrowserTabBar - data tab", () => {
   it("shows data tab when data_access capability is true", async () => {
     const client = makeClient();
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
-    await waitFor(() => expect(screen.getByRole("button", { name: /^data/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("tab", { name: /^data/i })).toBeInTheDocument());
   });
 
   it("hides data tab when data_access capability is false", async () => {
@@ -117,14 +117,14 @@ describe("EntityBrowserTabBar - data tab", () => {
     await waitFor(() => {
       expect(client.listOperations).toHaveBeenCalled();
     });
-    expect(screen.queryByRole("button", { name: /^data/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^data/i })).not.toBeInTheDocument();
   });
 
   it("shows data tab when capabilities is null (fallback mode)", async () => {
     const client = makeClient();
     renderTabBar({ client, capabilities: null, entityId: "e1" });
     // In fallback mode, standard tabs shown immediately (no prefetch needed)
-    expect(screen.getByRole("button", { name: /^data/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^data/i })).toBeInTheDocument();
   });
 });
 
@@ -141,7 +141,7 @@ describe("EntityBrowserTabBar - count=0 hides tab", () => {
     await waitFor(() => expect(client.listOperations).toHaveBeenCalled());
     // Wait for render after prefetch
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
   });
 
   it("hides configurations tab when prefetch returns 0 parameters", async () => {
@@ -153,7 +153,7 @@ describe("EntityBrowserTabBar - count=0 hides tab", () => {
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => expect(client.listConfigurations).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /^configurations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^configurations/i })).not.toBeInTheDocument();
   });
 
   it("hides faults tab when prefetch returns 0 faults", async () => {
@@ -163,7 +163,7 @@ describe("EntityBrowserTabBar - count=0 hides tab", () => {
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => expect(client.listEntityFaults).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
   });
 });
 
@@ -181,10 +181,12 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^operations/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
     });
-    // Badge showing count "2"
-    expect(screen.getByText("2")).toBeInTheDocument();
+    // Badge count "2" must live INSIDE the operations tab (scoped so it cannot
+    // pass vacuously against some unrelated "2" elsewhere in the DOM).
+    const opsTab = screen.getByRole("tab", { name: /^operations/i });
+    expect(within(opsTab).getByText("2")).toBeInTheDocument();
   });
 
   it("shows configurations tab with badge when parameters > 0", async () => {
@@ -201,9 +203,10 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^configurations/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
     });
-    expect(screen.getByText("3")).toBeInTheDocument();
+    const configTab = screen.getByRole("tab", { name: /^configurations/i });
+    expect(within(configTab).getByText("3")).toBeInTheDocument();
   });
 
   it("shows faults tab with badge when fault count > 0", async () => {
@@ -221,9 +224,10 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^faults/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
     });
-    expect(screen.getByText("1")).toBeInTheDocument();
+    const faultsTab = screen.getByRole("tab", { name: /^faults/i });
+    expect(within(faultsTab).getByText("1")).toBeInTheDocument();
   });
 });
 
@@ -244,7 +248,7 @@ describe("EntityBrowserTabBar - capability-disabled hides tab", () => {
       // prefetch for ops is skipped when capability is false; just faults/configs
       expect(client.listEntityFaults).toHaveBeenCalled();
     });
-    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
   });
 
   it("hides faults even when count > 0 if faults capability is false", async () => {
@@ -266,7 +270,7 @@ describe("EntityBrowserTabBar - capability-disabled hides tab", () => {
     // but operations/configurations prefetch still run)
     await waitFor(() => expect(client.listConfigurations).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
   });
 
   it("hides logs tab when logs capability is false", async () => {
@@ -274,7 +278,7 @@ describe("EntityBrowserTabBar - capability-disabled hides tab", () => {
     const client = makeClient();
     renderTabBar({ client, capabilities: caps, entityId: "e1" });
     await waitFor(() => expect(client.listEntityFaults).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: /^logs/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^logs/i })).not.toBeInTheDocument();
   });
 });
 
@@ -287,11 +291,11 @@ describe("EntityBrowserTabBar - null capabilities fallback", () => {
     const client = makeClient();
     renderTabBar({ client, capabilities: null, entityId: "e1" });
     // Fallback: show all tabs without a prefetch
-    expect(screen.getByRole("button", { name: /^data/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^operations/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^configurations/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^faults/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^logs/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^data/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^logs/i })).toBeInTheDocument();
   });
 
   it("does not call prefetch methods when capabilities is null", async () => {
@@ -315,11 +319,11 @@ describe("EntityBrowserTabBar - NO_CAPS (all capabilities off)", () => {
     renderTabBar({ client, capabilities: NO_CAPS, entityId: "e1" });
     // No prefetch is triggered for any disabled cap; wait for the effect cycle
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("button", { name: /^data/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^configurations/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^faults/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^logs/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^data/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^configurations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^logs/i })).not.toBeInTheDocument();
   });
 
   it("does not call prefetch methods when all capabilities are false", async () => {
@@ -353,7 +357,7 @@ describe("EntityBrowserTabBar - logs tab", () => {
     // logs tab visible when logs cap enabled, regardless of prefetch
     await waitFor(() => expect(client.listEntityFaults).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.getByRole("button", { name: /^logs/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^logs/i })).toBeInTheDocument();
   });
 });
 
@@ -413,10 +417,10 @@ describe("EntityBrowserTabBar - parallel prefetch", () => {
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
       // configurations visible (count=1), operations hidden (error treated as 0), faults hidden (count=0)
-      expect(screen.getByRole("button", { name: /^configurations/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
   });
 });
 
@@ -470,7 +474,7 @@ describe("EntityBrowserTabBar - stale guard", () => {
     await act(async () => { await Promise.resolve(); });
 
     // Operations tab should NOT show (stale result discarded, second entity has 0 ops)
-    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
   });
 });
 
@@ -479,24 +483,37 @@ describe("EntityBrowserTabBar - stale guard", () => {
 // ---------------------------------------------------------------------------
 
 describe("EntityBrowserTabBar - no setState after unmount", () => {
-  it("does not throw or call setState after unmount (prefetch still in flight)", async () => {
-    let resolveOps!: () => void;
-    const pending = new Promise<void>((r) => { resolveOps = r; });
-    const listOperations = vi.fn().mockReturnValue(pending.then(() => []));
+  it("freezes prefetch work after unmount (resolving the stale prefetch causes no new client calls or tab render)", async () => {
+    // The unmounted component's prefetch is still pending. When it resolves
+    // after unmount, the cancel/mounted guard must discard the result: no extra
+    // client calls, and a freshly-mounted sibling (different entity, 0 ops) must
+    // not show an operations tab from the stale resolution.
+    let resolveOps!: (ops: { name: string; path: string; type: string; kind: "service" }[]) => void;
+    const pending = new Promise<{ name: string; path: string; type: string; kind: "service" }[]>(
+      (r) => { resolveOps = r; },
+    );
+    const listOperations = vi.fn().mockReturnValue(pending);
     const client = makeClient({ listOperations });
 
-    const consoleSpy = vi.spyOn(console, "error");
     const { unmount } = renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
 
-    // Unmount while prefetch is still pending
-    unmount();
+    await waitFor(() => expect(listOperations).toHaveBeenCalledTimes(1));
 
-    // Now resolve the stale prefetch - should not cause any errors
-    resolveOps();
+    // Unmount while prefetch is still pending, then resolve the stale prefetch
+    // with a non-empty op list that WOULD have shown an operations tab.
+    unmount();
+    resolveOps([{ name: "op1", path: "/op1", type: "", kind: "service" }]);
     await act(async () => { await Promise.resolve(); });
 
-    // No React "setState on unmounted component" or similar error
-    expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringMatching(/unmounted/));
-    consoleSpy.mockRestore();
+    // Call count is frozen: the resolved stale promise triggered no re-fetch.
+    expect(listOperations).toHaveBeenCalledTimes(1);
+
+    // A fresh sibling for a different entity with 0 ops must not inherit the
+    // stale operations count from the unmounted component.
+    const siblingClient = makeClient({ listOperations: vi.fn().mockResolvedValue([]) });
+    renderTabBar({ client: siblingClient, capabilities: ALL_CAPS, entityId: "e2" });
+    await waitFor(() => expect(siblingClient.listOperations).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
   });
 });
