@@ -91,7 +91,7 @@ export interface EntityBrowserTabBarProps {
   capabilities: RootCapabilities | null;
   entityId: string;
   entityType: SovdResourceEntityType;
-  activeTab: string;
+  activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   theme: Theme;
 }
@@ -161,8 +161,8 @@ export function EntityBrowserTabBar({
 
   // If the current active tab became hidden (prefetch finished, count=0), fall back to first visible
   const resolvedActive: Tab =
-    visibleTabs.includes(activeTab as Tab)
-      ? (activeTab as Tab)
+    visibleTabs.includes(activeTab)
+      ? activeTab
       : (visibleTabs[0] ?? "data");
 
   // Notify parent of active-tab fallback on the next tick (avoid setState during render)

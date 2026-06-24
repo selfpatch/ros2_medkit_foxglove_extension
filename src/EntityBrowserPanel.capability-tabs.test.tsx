@@ -4,8 +4,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 import { EntityBrowserTabBar } from "./EntityBrowserPanel";
+import type { EntityBrowserTabBarProps } from "./EntityBrowserPanel";
 import type { MedkitApiClient } from "./medkit-api";
 import type { RootCapabilities, ListFaultsResponse } from "./types";
+
+type Tab = EntityBrowserTabBarProps["activeTab"];
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -70,8 +73,8 @@ interface RenderTabBarProps {
   capabilities: RootCapabilities | null;
   entityId: string;
   entityType?: "apps" | "components";
-  activeTab?: string;
-  onTabChange?: (t: string) => void;
+  activeTab?: Tab;
+  onTabChange?: (t: Tab) => void;
 }
 
 function renderTabBar({
@@ -299,6 +302,43 @@ describe("EntityBrowserTabBar - null capabilities fallback", () => {
     expect(client.listOperations).not.toHaveBeenCalled();
     expect(client.listConfigurations).not.toHaveBeenCalled();
     expect(client.listEntityFaults).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: NO_CAPS - all capabilities off
+// ---------------------------------------------------------------------------
+
+describe("EntityBrowserTabBar - NO_CAPS (all capabilities off)", () => {
+  it("hides all tabs when every capability is false", async () => {
+    const client = makeClient();
+    renderTabBar({ client, capabilities: NO_CAPS, entityId: "e1" });
+    // No prefetch is triggered for any disabled cap; wait for the effect cycle
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("button", { name: /^data/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^configurations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^logs/i })).not.toBeInTheDocument();
+  });
+
+  it("does not call prefetch methods when all capabilities are false", async () => {
+    const client = makeClient();
+    renderTabBar({ client, capabilities: NO_CAPS, entityId: "e1" });
+    await act(async () => { await Promise.resolve(); });
+    // All capability flags are false so no prefetch requests should be issued
+    expect(client.listOperations).not.toHaveBeenCalled();
+    expect(client.listConfigurations).not.toHaveBeenCalled();
+    expect(client.listEntityFaults).not.toHaveBeenCalled();
+  });
+
+  it("does not show a blank/invalid active tab when no tabs are visible", async () => {
+    const onTabChange = vi.fn();
+    renderTabBar({ client: makeClient(), capabilities: NO_CAPS, entityId: "e1", activeTab: "data", onTabChange });
+    await act(async () => { await Promise.resolve(); });
+    // The active tab should not trigger an onTabChange call with an invalid value
+    // when visibleTabs is empty (resolvedActive falls back to "data" which equals activeTab)
+    expect(onTabChange).not.toHaveBeenCalled();
   });
 });
 
