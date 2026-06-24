@@ -28,7 +28,6 @@ import type {
 import { createGatewayClient, MedkitApiError } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
 import { isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
-import type { MedkitError } from "@selfpatch/ros2-medkit-client-ts";
 import {
   getEntityData,
   getEntityDataItem,
