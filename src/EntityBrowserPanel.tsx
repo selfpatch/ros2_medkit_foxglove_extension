@@ -11,6 +11,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
 } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -28,6 +29,7 @@ import type {
   SovdResourceEntityType,
   FaultResponse,
   Snapshot,
+  RootCapabilities,
 } from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
@@ -50,6 +52,190 @@ interface TreeNode {
 
 type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
 
+const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", "logs"];
+
+// ---------------------------------------------------------------------------
+// Capability -> tab mapping
+//   data_access     -> "data"         (always shown; no count prefetch)
+//   operations      -> "operations"   (shown when cap enabled AND count > 0)
+//   configurations  -> "configurations" (shown when cap enabled AND count > 0)
+//   faults          -> "faults"       (shown when cap enabled AND count > 0)
+//   logs            -> "logs"         (shown when cap enabled; no count check)
+// ---------------------------------------------------------------------------
+
+interface ResourceCounts {
+  operations: number;
+  configurations: number;
+  faults: number;
+}
+
+function deriveVisibleTabs(capabilities: RootCapabilities | null, counts: ResourceCounts | null): Tab[] {
+  if (capabilities === null) return STANDARD_TABS;
+  const tabs: Tab[] = [];
+  if (capabilities.data_access) tabs.push("data");
+  if (capabilities.operations && counts !== null && counts.operations > 0) tabs.push("operations");
+  if (capabilities.configurations && counts !== null && counts.configurations > 0) tabs.push("configurations");
+  if (capabilities.faults && counts !== null && counts.faults > 0) tabs.push("faults");
+  if (capabilities.logs) tabs.push("logs");
+  return tabs;
+}
+
+// ---------------------------------------------------------------------------
+// EntityBrowserTabBar
+// Exported for testing. Handles capability-driven tab visibility, parallel
+// prefetch of resource counts, and the loading skeleton.
+// ---------------------------------------------------------------------------
+
+export interface EntityBrowserTabBarProps {
+  client: MedkitApiClient | null;
+  capabilities: RootCapabilities | null;
+  entityId: string;
+  entityType: SovdResourceEntityType;
+  activeTab: string;
+  onTabChange: (tab: Tab) => void;
+  theme: Theme;
+}
+
+export function EntityBrowserTabBar({
+  client,
+  capabilities,
+  entityId,
+  entityType,
+  activeTab,
+  onTabChange,
+  theme,
+}: EntityBrowserTabBarProps): ReactElement {
+  const c = S.colors(theme);
+
+  // null = still prefetching; set after Promise.all resolves or caps is null
+  const [counts, setCounts] = useState<ResourceCounts | null>(null);
+  const [prefetching, setPrefetching] = useState(false);
+
+  // Track the current entity to detect stale results and unmount
+  const entityRef = useRef<string>(entityId);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    entityRef.current = entityId;
+
+    // No client or no capabilities -> fallback mode, no prefetch
+    if (!client || capabilities === null) {
+      setCounts(null);
+      setPrefetching(false);
+      return;
+    }
+
+    // Reset counts for new entity
+    setCounts(null);
+    setPrefetching(true);
+    const currentEntityId = entityId;
+
+    const fetchOps = capabilities.operations
+      ? client.listOperations(entityType, entityId).then((ops) => ops.length).catch(() => 0)
+      : Promise.resolve(0);
+
+    const fetchConfigs = capabilities.configurations
+      ? client.listConfigurations(entityType, entityId).then((r) => r.parameters.length).catch(() => 0)
+      : Promise.resolve(0);
+
+    const fetchFaults = capabilities.faults
+      ? client.listEntityFaults(entityType, entityId).then((r) => r.items.length).catch(() => 0)
+      : Promise.resolve(0);
+
+    void Promise.all([fetchOps, fetchConfigs, fetchFaults]).then(([ops, configs, faults]) => {
+      if (!mountedRef.current) return;
+      if (entityRef.current !== currentEntityId) return;
+      setCounts({ operations: ops, configurations: configs, faults });
+      setPrefetching(false);
+    });
+  }, [client, capabilities, entityId, entityType]);
+
+  const visibleTabs = deriveVisibleTabs(capabilities, counts);
+
+  // If the current active tab became hidden (prefetch finished, count=0), fall back to first visible
+  const resolvedActive: Tab =
+    visibleTabs.includes(activeTab as Tab)
+      ? (activeTab as Tab)
+      : (visibleTabs[0] ?? "data");
+
+  // Notify parent of active-tab fallback on the next tick (avoid setState during render)
+  const onTabChangeRef = useRef(onTabChange);
+  onTabChangeRef.current = onTabChange;
+  useEffect(() => {
+    if (resolvedActive !== activeTab && visibleTabs.length > 0) {
+      onTabChangeRef.current(resolvedActive);
+    }
+  }, [resolvedActive, activeTab, visibleTabs]);
+
+  if (prefetching) {
+    return (
+      <div
+        role="status"
+        aria-label="prefetching resource counts"
+        style={{ display: "flex", gap: 4, marginBottom: 8 }}
+      >
+        {STANDARD_TABS.map((t) => (
+          <div
+            key={t}
+            style={{
+              height: 28,
+              width: 80,
+              borderRadius: 4,
+              background: c.bgAlt,
+              opacity: 0.5,
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
+      {visibleTabs.map((t) => {
+        const count = counts
+          ? (t === "operations" ? counts.operations : t === "configurations" ? counts.configurations : t === "faults" ? counts.faults : 0)
+          : 0;
+        const isActive = resolvedActive === t;
+        return (
+          <button
+            key={t}
+            aria-label={t}
+            style={{
+              ...S.btn(theme, isActive ? "primary" : "ghost"),
+              textTransform: "capitalize",
+            }}
+            onClick={() => onTabChange(t)}
+          >
+            {t}
+            {count > 0 && (
+              <span
+                style={{
+                  ...S.badge(
+                    "#fff",
+                    t === "faults" ? c.critical : c.accent,
+                  ),
+                  marginLeft: 4,
+                  fontSize: 10,
+                }}
+              >
+                {count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Panel Component
 // ---------------------------------------------------------------------------
@@ -70,6 +256,9 @@ function EntityBrowserPanel({
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | undefined>();
+
+  // null = not yet fetched or getRoot failed (fallback mode)
+  const [capabilities, setCapabilities] = useState<RootCapabilities | null>(null);
 
   // Tree
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -133,6 +322,11 @@ function EntityBrowserPanel({
       }
       setClient(c);
       setConnected(true);
+
+      // Fetch capabilities from GET /. Failure is non-fatal: null = fallback mode.
+      void c.getRoot().then((root) => setCapabilities(root.capabilities)).catch(() => {
+        setCapabilities(null);
+      });
 
       // Load areas and functions in parallel.
       const [areas, funcs] = await Promise.all([
@@ -337,26 +531,16 @@ function EntityBrowserPanel({
               </span>
             </h3>
 
-            {/* Tabs */}
-            <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
-              {(["data", "operations", "configurations", "faults", "logs"] as Tab[]).map((t) => (
-                <button
-                  key={t}
-                  style={{
-                    ...S.btn(theme, activeTab === t ? "primary" : "ghost"),
-                    textTransform: "capitalize",
-                  }}
-                  onClick={() => setActiveTab(t)}
-                >
-                  {t}
-                  {t === "faults" && faults.length > 0 && (
-                    <span style={{ ...S.badge("#fff", c.critical), marginLeft: 4, fontSize: 10 }}>
-                      {faults.length}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+            {/* Capability-driven tab bar */}
+            <EntityBrowserTabBar
+              client={client}
+              capabilities={capabilities}
+              entityId={selected.id}
+              entityType={selectedType}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              theme={theme}
+            />
 
             {tabError && <div style={S.errorBox(theme)}>⚠ {tabError}</div>}
             {tabLoading && <div style={{ color: c.textMuted }}>Loading…</div>}
