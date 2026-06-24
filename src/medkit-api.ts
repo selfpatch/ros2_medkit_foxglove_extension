@@ -15,6 +15,7 @@ import type {
   CreateExecutionRequest,
   CreateExecutionResponse,
   OperationExecution,
+  GatewayExecutionStatus,
   Fault,
   FaultSeverity,
   FaultStatus,
@@ -71,6 +72,24 @@ function unwrapItems<T>(response: unknown): T[] {
   if (Array.isArray(response)) return response as T[];
   const w = response as { items?: T[] };
   return w.items ?? [];
+}
+
+const GATEWAY_EXECUTION_STATUSES: ReadonlySet<GatewayExecutionStatus> = new Set([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+]);
+
+/**
+ * Narrow an untrusted wire status string to a known gateway execution status.
+ * An unrecognized value falls back to "pending" (non-terminal) so the UI keeps
+ * polling rather than silently treating an unknown state as terminal.
+ */
+function narrowExecutionStatus(raw: string): GatewayExecutionStatus {
+  return GATEWAY_EXECUTION_STATUSES.has(raw as GatewayExecutionStatus)
+    ? (raw as GatewayExecutionStatus)
+    : "pending";
 }
 
 // ---------------------------------------------------------------------------
@@ -406,7 +425,7 @@ export class MedkitApiClient {
     const raw = data as unknown as { id?: string | null; status: string; parameters?: unknown | null; "x-medkit"?: { ros2_status?: string | null } | null };
     return {
       id: raw.id,
-      status: raw.status as OperationExecution["status"],
+      status: narrowExecutionStatus(raw.status),
       parameters: raw.parameters,
       ros2_status: raw["x-medkit"]?.ros2_status,
     };
