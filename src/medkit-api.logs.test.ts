@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MedkitApiClient } from "./medkit-api";
 import { getEntityLogs, getEntityLogsConfiguration, putEntityLogsConfiguration } from "./api-dispatch";
+import { MedkitApiError } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,27 @@ describe("putEntityLogsConfiguration - dispatches to correct path with body", ()
     const [path] = putCalls[0]!;
     expect(path).toBe("/functions/{function_id}/logs/configuration");
   });
+
+  it("components: PUT /components/{component_id}/logs/configuration", async () => {
+    const { client, putCalls } = makeClient();
+    await putEntityLogsConfiguration(client, "components", "host-1", { max_entries: 200 });
+    const [path, opts] = putCalls[0]!;
+    expect(path).toBe("/components/{component_id}/logs/configuration");
+    expect(
+      ((opts as { params: { path: Record<string, string> } }).params.path).component_id,
+    ).toBe("host-1");
+    expect((opts as { body: unknown }).body).toEqual({ max_entries: 200 });
+  });
+
+  it("areas: PUT /areas/{area_id}/logs/configuration", async () => {
+    const { client, putCalls } = makeClient();
+    await putEntityLogsConfiguration(client, "areas", "factory", { severity_filter: "warning" });
+    const [path, opts] = putCalls[0]!;
+    expect(path).toBe("/areas/{area_id}/logs/configuration");
+    expect(
+      ((opts as { params: { path: Record<string, string> } }).params.path).area_id,
+    ).toBe("factory");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -249,7 +271,9 @@ describe("MedkitApiClient.listEntityLogs", () => {
       ),
     );
     const client = new MedkitApiClient("http://gw", "api/v1");
-    await expect(client.listEntityLogs("apps", "motor")).rejects.toThrow();
+    const err = await client.listEntityLogs("apps", "motor").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MedkitApiError);
+    expect((err as MedkitApiError).status).toBe(503);
   });
 
   it("throws on 404 (entity not found)", async () => {
@@ -264,7 +288,9 @@ describe("MedkitApiClient.listEntityLogs", () => {
       ),
     );
     const client = new MedkitApiClient("http://gw", "api/v1");
-    await expect(client.listEntityLogs("apps", "ghost")).rejects.toThrow();
+    const err = await client.listEntityLogs("apps", "ghost").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MedkitApiError);
+    expect((err as MedkitApiError).status).toBe(404);
   });
 });
 
@@ -281,7 +307,7 @@ describe("MedkitApiClient.getLogsConfiguration", () => {
     expect(config.severity_filter).toBe("warning");
   });
 
-  it("throws on 404 (no LogManager)", async () => {
+  it("throws on 404 (no LogManager), preserving the error status", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -293,7 +319,9 @@ describe("MedkitApiClient.getLogsConfiguration", () => {
       ),
     );
     const client = new MedkitApiClient("http://gw", "api/v1");
-    await expect(client.getLogsConfiguration("components", "host-1")).rejects.toThrow();
+    const err = await client.getLogsConfiguration("components", "host-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MedkitApiError);
+    expect((err as MedkitApiError).status).toBe(404);
   });
 });
 
@@ -313,7 +341,7 @@ describe("MedkitApiClient.updateLogsConfiguration", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("throws on 400 (bad body)", async () => {
+  it("throws on 400 (bad body), preserving the error status", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -325,8 +353,10 @@ describe("MedkitApiClient.updateLogsConfiguration", () => {
       ),
     );
     const client = new MedkitApiClient("http://gw", "api/v1");
-    await expect(
-      client.updateLogsConfiguration("functions", "safety-fn", { max_entries: -1 }),
-    ).rejects.toThrow();
+    const err = await client
+      .updateLogsConfiguration("functions", "safety-fn", { max_entries: -1 })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MedkitApiError);
+    expect((err as MedkitApiError).status).toBe(400);
   });
 });
