@@ -96,9 +96,22 @@ export interface CreateExecutionRequest {
   parameters?: unknown;
 }
 
+/**
+ * Status of a create-execution response. The synchronous (200) branch returns a
+ * terminal `completed`/`failed`; the asynchronous (202) branch returns `accepted`
+ * (the SOVD async alias, treated like `pending`). `pending`/`running` may also
+ * appear for an action that has already started by the time the response lands.
+ */
+export type CreateExecutionStatus =
+  | "accepted"
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
 export interface CreateExecutionResponse {
   id?: string;
-  status: string;
+  status: CreateExecutionStatus;
   kind: OperationKind;
   result?: unknown;
   parameters?: unknown;
@@ -113,9 +126,18 @@ export interface CreateExecutionResponse {
  *   - `parameters` as both live feedback (while running) and result (when terminal).
  *   - `ros2_status` from x-medkit as supplemental info.
  */
+/** The execution status values the gateway emits over the wire. */
+export type GatewayExecutionStatus = "pending" | "running" | "completed" | "failed";
+
+/**
+ * Execution status as the UI tracks it. `canceled` is a client-only terminal
+ * state set after a successful DELETE; the gateway never emits it on the wire.
+ */
+export type ExecutionStatus = GatewayExecutionStatus | "canceled";
+
 export interface OperationExecution {
   id?: string | null;
-  status: "pending" | "running" | "completed" | "failed";
+  status: ExecutionStatus;
   parameters?: unknown | null;
   ros2_status?: string | null;
 }
