@@ -11,6 +11,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useMemo,
   useRef,
 } from "react";
 import { createRoot } from "react-dom/client";
@@ -56,7 +57,8 @@ const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", 
 
 // ---------------------------------------------------------------------------
 // Capability -> tab mapping
-//   data_access     -> "data"         (always shown; no count prefetch)
+//   data_access     -> "data"         (shown when the data_access capability is
+//                                       enabled; no count prefetch)
 //   operations      -> "operations"   (shown when cap enabled AND count > 0)
 //   configurations  -> "configurations" (shown when cap enabled AND count > 0)
 //   faults          -> "faults"       (shown when cap enabled AND count > 0)
@@ -110,6 +112,9 @@ export function EntityBrowserTabBar({
   // null = still prefetching; set after Promise.all resolves or caps is null
   const [counts, setCounts] = useState<ResourceCounts | null>(null);
   const [prefetching, setPrefetching] = useState(false);
+  // Which tab currently has keyboard focus, for a visible focus ring (WCAG
+  // 2.4.7) - inline styles cannot express :focus-visible.
+  const [focusedTab, setFocusedTab] = useState<Tab | null>(null);
 
   // Track the current entity to detect stale results and unmount
   const entityRef = useRef<string>(entityId);
@@ -136,6 +141,10 @@ export function EntityBrowserTabBar({
     setCounts(null);
     setPrefetching(true);
     const currentEntityId = entityId;
+    // Per-run cancel flag: a fast entity switch (or unmount) flips this so the
+    // resolved prefetch from THIS run discards all of its setState. The current
+    // run is the only one allowed to clear `prefetching`.
+    let cancelled = false;
 
     const fetchOps = capabilities.operations
       ? client.listOperations(entityType, entityId).then((ops) => ops.length).catch(() => 0)
@@ -150,14 +159,24 @@ export function EntityBrowserTabBar({
       : Promise.resolve(0);
 
     void Promise.all([fetchOps, fetchConfigs, fetchFaults]).then(([ops, configs, faults]) => {
-      if (!mountedRef.current) return;
+      if (cancelled || !mountedRef.current) return;
       if (entityRef.current !== currentEntityId) return;
       setCounts({ operations: ops, configurations: configs, faults });
       setPrefetching(false);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [client, capabilities, entityId, entityType]);
 
-  const visibleTabs = deriveVisibleTabs(capabilities, counts);
+  // Memoize so the array identity is stable across renders (its only real
+  // inputs are capabilities + counts); otherwise the fallback effect below
+  // would re-fire every render and churn onTabChange.
+  const visibleTabs = useMemo(
+    () => deriveVisibleTabs(capabilities, counts),
+    [capabilities, counts],
+  );
 
   // If the current active tab became hidden (prefetch finished, count=0), fall back to first visible
   const resolvedActive: Tab =
@@ -198,7 +217,7 @@ export function EntityBrowserTabBar({
   }
 
   return (
-    <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
+    <div role="tablist" style={{ display: "flex", gap: 2, marginBottom: 8 }}>
       {visibleTabs.map((t) => {
         const count = counts
           ? (t === "operations" ? counts.operations : t === "configurations" ? counts.configurations : t === "faults" ? counts.faults : 0)
@@ -207,16 +226,22 @@ export function EntityBrowserTabBar({
         return (
           <button
             key={t}
-            aria-label={t}
+            role="tab"
+            aria-selected={isActive}
+            aria-label={count > 0 ? `${t}, ${count} items` : t}
             style={{
               ...S.btn(theme, isActive ? "primary" : "ghost"),
               textTransform: "capitalize",
+              ...S.focusRing(theme, focusedTab === t),
             }}
             onClick={() => onTabChange(t)}
+            onFocus={() => setFocusedTab(t)}
+            onBlur={() => setFocusedTab(null)}
           >
             {t}
             {count > 0 && (
               <span
+                aria-hidden="true"
                 style={{
                   ...S.badge(
                     "#fff",
@@ -314,6 +339,10 @@ function EntityBrowserPanel({
   const doConnect = useCallback(async () => {
     const c = new MedkitApiClient(state.gatewayUrl, state.basePath);
     setConnError(undefined);
+    // Reset stale capabilities from a prior connection: reconnecting to a
+    // different gateway must not inherit the old capability set (which would
+    // leave tabs gated on the wrong server's flags until getRoot resolves).
+    setCapabilities(null);
     try {
       const ok = await c.ping();
       if (!ok) {
