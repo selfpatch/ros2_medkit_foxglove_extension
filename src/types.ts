@@ -66,6 +66,38 @@ export interface ComponentConfigurations {
   parameters: Parameter[];
 }
 
+/**
+ * One entry in the 207 Multi-Status body returned by
+ * DELETE .../configurations (reset all). Mirrors the gateway schema
+ * `ConfigurationDeleteResultItem` exactly - there are NO `reset_count` /
+ * `failed_count` fields on the wire; counts are derived from this list.
+ */
+export interface ConfigurationDeleteResultItem {
+  app_id: string;
+  node: string;
+  success: boolean;
+  error?: string | null;
+  details?: unknown | null;
+}
+
+/**
+ * 207 Multi-Status body for DELETE .../configurations (reset all).
+ * Mirrors the gateway schema `ConfigurationDeleteMultiStatus`.
+ */
+export interface ConfigurationDeleteMultiStatus {
+  entity_id: string;
+  results: ConfigurationDeleteResultItem[];
+}
+
+/**
+ * Derived reset-all counts the panel renders. Computed from
+ * {@link ConfigurationDeleteMultiStatus.results}, not read off the wire.
+ */
+export interface ConfigurationResetCounts {
+  reset_count: number;
+  failed_count: number;
+}
+
 // =============================================================================
 // Operations (ROS 2 Services & Actions)
 // =============================================================================
