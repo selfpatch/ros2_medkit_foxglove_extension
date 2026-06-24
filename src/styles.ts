@@ -128,6 +128,23 @@ export function input(theme: Theme): CSSProperties {
   };
 }
 
+/**
+ * Visible keyboard-focus ring (WCAG 2.4.7). Inline React styles cannot express
+ * `:focus-visible`, so interactive controls (tabs, editor inputs, reset
+ * buttons) track focus in state and spread this when focused. Returns an empty
+ * object when not focused so the control keeps its base style. Mirrors the
+ * focus treatment used in OperationsPanel.
+ */
+export function focusRing(theme: Theme, focused: boolean): CSSProperties {
+  if (!focused) return {};
+  const c = colors(theme);
+  return {
+    outline: `2px solid ${c.accent}`,
+    outlineOffset: 1,
+    boxShadow: `0 0 0 2px ${c.accent}55`,
+  };
+}
+
 // Static table styling; takes _theme only to keep the style-helper call sites
 // uniform with the themed helpers (th/td/etc.).
 export function table(_theme: Theme): CSSProperties {
