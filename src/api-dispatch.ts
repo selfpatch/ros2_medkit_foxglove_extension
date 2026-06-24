@@ -292,6 +292,60 @@ export function getEntityBulkDataDescriptors(
 // Executions
 // =============================================================================
 
+export function getExecution(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  operationId: string,
+  executionId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { app_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "components":
+      return client.GET("/components/{component_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { component_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "areas":
+      return client.GET("/areas/{area_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { area_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "functions":
+      return client.GET("/functions/{function_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { function_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+  }
+}
+
+export function cancelExecution(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  operationId: string,
+  executionId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.DELETE("/apps/{app_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { app_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "components":
+      return client.DELETE("/components/{component_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { component_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "areas":
+      return client.DELETE("/areas/{area_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { area_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+    case "functions":
+      return client.DELETE("/functions/{function_id}/operations/{operation_id}/executions/{execution_id}", {
+        params: { path: { function_id: entityId, operation_id: operationId, execution_id: executionId } },
+      });
+  }
+}
+
 export function postEntityExecution(
   client: MedkitClient,
   entityType: SovdResourceEntityType,
