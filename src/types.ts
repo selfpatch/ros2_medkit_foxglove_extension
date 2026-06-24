@@ -292,9 +292,9 @@ export type LogSeverity = "debug" | "info" | "warning" | "error" | "fatal";
 export interface LogContext {
   /** Logger FQN, e.g. "powertrain/engine/temp_sensor" */
   node: string;
-  file?: string;
-  function?: string;
-  line?: number;
+  file?: string | null;
+  function?: string | null;
+  line?: number | null;
 }
 
 /**
@@ -314,16 +314,17 @@ export interface LogEntry {
  * Populated by area/component/function log aggregation in the gateway.
  */
 export interface LogListXMedkit {
-  entity_id?: string;
-  aggregation_level?: "function" | "area" | "component";
-  aggregated?: boolean;
-  aggregation_sources?: string[];
-  host_count?: number;
-  component_count?: number;
-  app_count?: number;
-  partial?: boolean;
-  contributors?: string[];
-  failed_peers?: string[];
+  entity_id?: string | null;
+  aggregation_level?: "function" | "area" | "component" | null;
+  aggregated?: boolean | null;
+  aggregation_sources?: string[] | null;
+  host_count?: number | null;
+  component_count?: number | null;
+  app_count?: number | null;
+  partial?: boolean | null;
+  contributors?: string[] | null;
+  failed_peers?: string[] | null;
+  peer_dropped_items?: number | null;
 }
 
 /**

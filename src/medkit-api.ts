@@ -615,7 +615,7 @@ export class MedkitApiClient {
   ): Promise<LogConfiguration> {
     const { data, error } = await dispatchGetEntityLogsConfiguration(this.client, entityType, entityId);
     if (error) throwApiError(error);
-    return data as unknown as LogConfiguration;
+    return data as LogConfiguration;
   }
 
   /**
