@@ -498,32 +498,46 @@ export class MedkitApiClient {
     onCleared: (f: Fault) => void,
     onError?: (e: Error) => void,
   ): () => void {
-    const es = new EventSource(this.url("faults/stream"));
-    const parse = (ev: MessageEvent): Fault | null => {
+    let unsubscribed = false;
+    const stream = this.client.streams.faults();
+
+    const parseFaultData = (data: unknown): Fault | null => {
       try {
-        const raw = JSON.parse(ev.data);
-        const fd = raw.fault || raw;
+        const raw = data as Record<string, unknown>;
+        const fd = (raw.fault as Record<string, unknown> | undefined) ?? raw;
         if ("fault_code" in fd) return this.transformFault(fd);
-        return fd as Fault;
+        return fd as unknown as Fault;
       } catch {
-        onError?.(new Error("Failed to parse fault event"));
+        if (!unsubscribed) onError?.(new Error("Failed to parse fault event"));
         return null;
       }
     };
-    es.addEventListener("fault_confirmed", (ev: MessageEvent) => {
-      const f = parse(ev);
-      if (f) onConfirmed(f);
-    });
-    es.addEventListener("fault_cleared", (ev: MessageEvent) => {
-      const f = parse(ev);
-      if (f) onCleared(f);
-    });
-    es.onmessage = (ev) => {
-      const f = parse(ev);
-      if (f) onConfirmed(f);
+
+    void (async () => {
+      try {
+        for await (const event of stream) {
+          if (unsubscribed) break;
+          const f = parseFaultData(event.data);
+          if (!f) continue;
+          if (event.event === "fault_confirmed") {
+            if (!unsubscribed) onConfirmed(f);
+          } else if (event.event === "fault_cleared") {
+            if (!unsubscribed) onCleared(f);
+          } else if (event.event === "message" || event.event === "") {
+            if (!unsubscribed) onConfirmed(f);
+          }
+        }
+      } catch (err) {
+        if (!unsubscribed) {
+          onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    })();
+
+    return () => {
+      unsubscribed = true;
+      stream.close();
     };
-    es.onerror = () => onError?.(new Error("Fault stream connection error"));
-    return () => es.close();
   }
 
   // ── Private helpers ───────────────────────────────────────────────
