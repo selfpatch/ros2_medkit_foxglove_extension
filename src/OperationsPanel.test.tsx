@@ -684,6 +684,52 @@ describe("OperationsPanel - action polling lifecycle", () => {
   });
 });
 
+describe("OperationsPanel - Run button disabled while polling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("disables Run while action is polling; re-enables at terminal", async () => {
+    const client = makePollingClient([
+      { status: "running" },
+      { status: "completed" },
+    ]);
+
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+
+    const runBtn = screen.getByRole("button", { name: `Run ${ACTION_OP.name}` });
+    expect(runBtn).not.toBeDisabled();
+
+    fireEvent.click(runBtn);
+
+    // After createExecution resolves, polling=true => button must be disabled
+    await waitFor(() => screen.getByText("exec-abc-123"));
+    expect(runBtn).toBeDisabled();
+
+    // Tick 1: running (still non-terminal) => still disabled
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(runBtn).toBeDisabled();
+
+    // Tick 2: completed (terminal) => polling stops => re-enabled
+    await act(async () => { vi.advanceTimersByTime(1100); await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
+    expect(runBtn).not.toBeDisabled();
+  });
+});
+
 describe("OperationsPanel - action cancel", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
