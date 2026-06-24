@@ -5,6 +5,8 @@
  * Derived from sovd_web_ui — simplified for Foxglove panels.
  */
 
+import type { TopicSchema } from "./schema-utils";
+
 // =============================================================================
 // Entity Types
 // =============================================================================
@@ -73,8 +75,10 @@ export type OperationKind = "service" | "action";
 export interface OperationTypeInfo {
   /** Converted input schema for the operation (request fields for a service,
    *  goal fields for an action). Populated from x-medkit.type_info via
-   *  convertJsonSchemaToTopicSchema; absent when the gateway omits type_info. */
-  schema?: Record<string, unknown>;
+   *  convertJsonSchemaToTopicSchema; absent when the gateway omits type_info.
+   *  Simplified vs web_ui: stores ONLY the input sub-schema as a flat TopicSchema,
+   *  not the full ServiceSchema/ActionSchema envelope. */
+  schema?: TopicSchema;
 }
 
 export interface Operation {
