@@ -176,13 +176,22 @@ function ActionExecutionPanel({
         )}
       </div>
 
-      {!terminal && activeExecution.parameters != null && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2 }}>
-            Last Feedback:
-          </div>
-          <pre style={preStyle}>{JSON.stringify(activeExecution.parameters, null, 2)}</pre>
-        </div>
+      {!terminal && (
+        <>
+          {activeExecution.ros2Status != null && (
+            <div style={{ marginBottom: 4, fontSize: 11, color: c.textMuted }}>
+              ROS 2 status: <code style={{ color: c.text }}>{activeExecution.ros2Status}</code>
+            </div>
+          )}
+          {activeExecution.parameters != null && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2 }}>
+                Last Feedback:
+              </div>
+              <pre style={preStyle}>{JSON.stringify(activeExecution.parameters, null, 2)}</pre>
+            </div>
+          )}
+        </>
       )}
 
       {terminal && (

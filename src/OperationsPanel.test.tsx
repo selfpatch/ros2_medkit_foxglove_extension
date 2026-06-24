@@ -38,6 +38,20 @@ const ACTION_OP: Operation = {
   kind: "action",
 };
 
+// Action operation with a non-empty schema - expects real form fields to render.
+const ACTION_OP_WITH_SCHEMA: Operation = {
+  name: "navigate_to_pose",
+  path: "/navigate_to_pose",
+  type: "nav2_msgs/NavigateToPose",
+  kind: "action",
+  type_info: {
+    schema: {
+      target_x: { type: "float64" },
+      target_y: { type: "float64" },
+    },
+  },
+};
+
 const SERVICE_RESPONSE: CreateExecutionResponse = {
   status: "completed",
   kind: "service",
@@ -290,6 +304,69 @@ describe("OperationsPanel - selecting an operation shows form", () => {
       "aria-pressed",
       "false",
     );
+  });
+});
+
+describe("OperationsPanel - action op field-render and lifecycle start", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders goal fields (not 'No parameters') when action op.type_info.schema has fields", async () => {
+    const client = makeClient([ACTION_OP_WITH_SCHEMA], ACTION_RESPONSE);
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP_WITH_SCHEMA.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP_WITH_SCHEMA.name }));
+
+    // Schema has target_x and target_y fields - "No parameters" must not appear.
+    expect(screen.queryByText("No parameters")).not.toBeInTheDocument();
+    expect(screen.getByText("target_x")).toBeInTheDocument();
+    expect(screen.getByText("target_y")).toBeInTheDocument();
+    // "Goal" label shown for actions
+    expect(screen.getByText("Goal")).toBeInTheDocument();
+  });
+
+  it("calls createExecution then starts polling when Run is clicked for action with schema", async () => {
+    const client = makeClient([ACTION_OP_WITH_SCHEMA], ACTION_RESPONSE);
+    render(
+      <OperationsPanel
+        client={client}
+        entityType="apps"
+        entityId="a1"
+        theme={THEME}
+      />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: ACTION_OP_WITH_SCHEMA.name }));
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP_WITH_SCHEMA.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP_WITH_SCHEMA.name}` }));
+
+    // createExecution called with goal key and the schema-defaulted form value
+    await waitFor(() => {
+      expect(client.createExecution).toHaveBeenCalledWith(
+        "apps",
+        "a1",
+        "navigate_to_pose",
+        { type: ACTION_OP_WITH_SCHEMA.type, goal: { target_x: 0, target_y: 0 } },
+      );
+    });
+
+    // ActionExecutionPanel appears with the execution id from ACTION_RESPONSE
+    await waitFor(() => {
+      expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
+    });
+
+    // Run button is disabled while polling
+    expect(screen.getByRole("button", { name: `Run ${ACTION_OP_WITH_SCHEMA.name}` })).toBeDisabled();
   });
 });
 
