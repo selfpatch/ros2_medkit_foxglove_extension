@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Logs tab in Entity Browser panel
+
+The Entity Browser panel now includes a Logs tab for each entity:
+
+- Queries entity logs via `GET /{entity-type}/{id}/logs` with server-side severity
+  filtering (debug / info / warn / error / fatal) and a context search parameter
+  (debounced, 300 ms).
+- Expandable rows reveal the source location (file:line), called function, and full
+  ISO 8601 nanosecond timestamp.
+- Aggregation header shown when the gateway merges logs from multiple sources
+  (function- or area-level aggregation); lists source names and count.
+- Optional auto-refresh (5 s interval) that pauses automatically while the panel
+  is not visible (Page Visibility API) and resumes with an immediate fetch.
+- Manual Refresh button always available regardless of auto-refresh state.
+- Display cap of 200 rows with a "Show all (N)" button when more entries are
+  returned.
+- Clear "no LogManager configured" state for HTTP 503/404 responses.
+- Note: log trigger endpoints are not included in this release (deferred).
+
 ### Operations request forms and action execution lifecycle
 
 The Operations tab in the Entity Browser panel now provides full interactive
