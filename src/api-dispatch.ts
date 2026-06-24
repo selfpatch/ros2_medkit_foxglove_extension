@@ -96,7 +96,7 @@ export function putEntityConfiguration(
   entityType: SovdResourceEntityType,
   entityId: string,
   configId: string,
-  body: { data?: unknown },
+  body: { data?: unknown | null; value?: unknown | null },
 ) {
   switch (entityType) {
     case "apps":
