@@ -17,11 +17,11 @@ import { createRoot } from "react-dom/client";
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { OperationsPanel } from "./OperationsPanel";
 import type {
   SovdEntity,
   ComponentTopic,
   Parameter,
-  Operation,
   Fault,
   App,
   SovdResourceEntityType,
@@ -84,7 +84,6 @@ function EntityBrowserPanel({
 
   // Tab data
   const [topics, setTopics] = useState<ComponentTopic[]>([]);
-  const [operations, setOperations] = useState<Operation[]>([]);
   const [configs, setConfigs] = useState<Parameter[]>([]);
   const [faults, setFaults] = useState<Fault[]>([]);
   const [apps, setApps] = useState<App[]>([]);
@@ -240,20 +239,17 @@ function EntityBrowserPanel({
       setTabLoading(true);
       setTabError(undefined);
       setTopics([]);
-      setOperations([]);
       setConfigs([]);
       setFaults([]);
       setApps([]);
 
       try {
-        const [dataRes, opsRes, cfgRes, faultsRes] = await Promise.all([
+        const [dataRes, cfgRes, faultsRes] = await Promise.all([
           client.listEntityData(eType, entity.id).catch(() => [] as ComponentTopic[]),
-          client.listOperations(eType, entity.id).catch(() => [] as Operation[]),
           client.listConfigurations(eType, entity.id).catch(() => ({ parameters: [] as Parameter[] })),
           client.listEntityFaults(eType, entity.id).catch(() => ({ items: [] as Fault[] })),
         ]);
         setTopics(dataRes);
-        setOperations(opsRes);
         setConfigs(cfgRes.parameters);
         setFaults(faultsRes.items);
 
@@ -371,12 +367,11 @@ function EntityBrowserPanel({
             {!tabLoading && activeTab === "data" && (
               <DataTab topics={topics} theme={theme} />
             )}
-            {!tabLoading && activeTab === "operations" && (
-              <OperationsTab
-                operations={operations}
-                entityId={selected.id}
-                entityType={selectedType}
+            {activeTab === "operations" && client != null && (
+              <OperationsPanel
                 client={client}
+                entityType={selectedType}
+                entityId={selected.id}
                 theme={theme}
               />
             )}
@@ -533,92 +528,6 @@ function DataTab({ topics, theme }: { topics: ComponentTopic[]; theme: Theme }):
         ))}
       </tbody>
     </table>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tab: Operations
-// ---------------------------------------------------------------------------
-
-function OperationsTab({
-  operations,
-  entityId,
-  entityType,
-  client,
-  theme,
-}: {
-  operations: Operation[];
-  entityId: string;
-  entityType: SovdResourceEntityType;
-  client: MedkitApiClient | null;
-  theme: Theme;
-}): ReactElement {
-  const c = S.colors(theme);
-  const [running, setRunning] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, unknown>>({});
-
-  const invokeOp = useCallback(
-    async (op: Operation) => {
-      if (!client) return;
-      setRunning(op.name);
-      try {
-        const req = op.kind === "action"
-          ? { type: op.type, goal: {} }
-          : { type: op.type, request: {} };
-        const res = await client.createExecution(entityType, entityId, op.name, req);
-        setResults((prev) => ({ ...prev, [op.name]: res }));
-      } catch (err) {
-        setResults((prev) => ({
-          ...prev,
-          [op.name]: { error: err instanceof Error ? err.message : "Failed" },
-        }));
-      } finally {
-        setRunning(null);
-      }
-    },
-    [client, entityId, entityType],
-  );
-
-  if (operations.length === 0) return <div style={S.emptyState(theme)}>No operations</div>;
-
-  return (
-    <div>
-      {operations.map((op) => (
-        <div key={op.name} style={S.card(theme)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <strong style={{ fontSize: 12 }}>{op.name}</strong>
-            <span style={S.badge(
-              "#fff",
-              op.kind === "action" ? c.warning : c.accent,
-            )}>
-              {op.kind}
-            </span>
-            <span style={{ color: c.textMuted, fontSize: 11, flex: 1 }}>{op.type}</span>
-            <button
-              style={S.btn(theme)}
-              disabled={running === op.name}
-              onClick={() => void invokeOp(op)}
-            >
-              {running === op.name ? "⏳" : "▶"} Invoke
-            </button>
-          </div>
-          {results[op.name] != null && (
-            <pre style={{
-              margin: "6px 0 0",
-              padding: 6,
-              background: c.bgAlt,
-              borderRadius: 4,
-              fontSize: 11,
-              overflow: "auto",
-              maxHeight: 200,
-              whiteSpace: "pre-wrap",
-            }}>
-              {JSON.stringify(results[op.name], null, 2)}
-            </pre>
-          )}
-        </div>
-      ))}
-    </div>
   );
 }
 
