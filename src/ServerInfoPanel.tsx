@@ -9,7 +9,7 @@ import { type CSSProperties, type ReactElement, useEffect, useRef, useState } fr
 import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
-import type { RootCapabilities, RootOverview } from "./types";
+import type { RootCapabilities, RootOverview, VersionInfo } from "./types";
 import { type GatewayConnection, joinConnection } from "./shared-connection";
 import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import * as S from "./styles";
@@ -58,6 +58,7 @@ export function ServerInfoPanelView({
 }: ServerInfoPanelViewProps): JSX.Element {
     const c = S.colors(theme);
     const [overview, setOverview] = useState<RootOverview | undefined>();
+    const [versionInfo, setVersionInfo] = useState<VersionInfo | undefined>();
     const [error, setError] = useState<string | undefined>();
     const [loading, setLoading] = useState(true);
     const mountedRef = useRef(true);
@@ -73,16 +74,20 @@ export function ServerInfoPanelView({
         setLoading(true);
         setError(undefined);
         setOverview(undefined);
+        setVersionInfo(undefined);
 
         // Pass fetchImpl into the client so the typed openapi-fetch client
         // uses the injected fetch (useful for tests).
         const client = new MedkitApiClient(baseUrl, "", fetchImpl);
 
-        void client
-            .getRoot()
-            .then((data) => {
+        void Promise.all([
+            client.getRoot(),
+            client.getVersionInfo().catch(() => undefined),
+        ])
+            .then(([root, vi]) => {
                 if (mountedRef.current) {
-                    setOverview(data);
+                    setOverview(root);
+                    setVersionInfo(vi);
                     setLoading(false);
                 }
             })
@@ -122,6 +127,7 @@ export function ServerInfoPanelView({
     }
 
     const enabledCaps = CAP_KEYS.filter((k) => overview.capabilities[k]);
+    const sovdInfo = versionInfo?.items?.[0];
 
     return (
         <div style={S.panelRoot(theme)}>
@@ -134,6 +140,12 @@ export function ServerInfoPanelView({
                     <OverviewRow label="Name" value={overview.name} theme={theme} mono={false} />
                     <OverviewRow label="Version" value={overview.version} theme={theme} mono />
                     <OverviewRow label="API Base" value={overview.api_base} theme={theme} mono />
+                    {sovdInfo?.version != null && (
+                        <OverviewRow label="SOVD Version" value={sovdInfo.version} theme={theme} mono />
+                    )}
+                    {sovdInfo?.base_uri != null && (
+                        <OverviewRow label="Base URI" value={sovdInfo.base_uri} theme={theme} mono />
+                    )}
                     {overview.auth?.enabled === true && (
                         <OverviewRow label="Auth" value={overview.auth.algorithm} theme={theme} mono={false} />
                     )}
