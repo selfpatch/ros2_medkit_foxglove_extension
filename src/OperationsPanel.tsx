@@ -10,7 +10,7 @@ import { type ReactElement, useCallback, useEffect, useState } from "react";
 
 import { type MedkitApiClient } from "./medkit-api";
 import { OperationRequestForm } from "./OperationRequestForm";
-import { convertJsonSchemaToTopicSchema, getSchemaDefaults } from "./schema-utils";
+import { getSchemaDefaults } from "./schema-utils";
 import type { TopicSchema } from "./schema-utils";
 import type { CreateExecutionResponse, Operation, SovdResourceEntityType } from "./types";
 import * as S from "./styles";
@@ -192,7 +192,7 @@ export function OperationsPanel({
     setResponse(null);
     setRunError(undefined);
 
-    const derivedSchema = convertJsonSchemaToTopicSchema(op.type_info?.schema) ?? {};
+    const derivedSchema = op.type_info?.schema ?? {};
     setSchema(derivedSchema);
     setFormValue(getSchemaDefaults(derivedSchema));
   }, []);
