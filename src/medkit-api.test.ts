@@ -68,7 +68,7 @@ describe("MedkitApiClient.ping", () => {
         expect((capturedSignal as unknown as AbortSignal).aborted).toBe(false);
     });
 
-    it("returns false when the AbortSignal fires (gateway timeout)", async () => {
+    it("returns false when fetch throws a DOMException (TimeoutError)", async () => {
         // Use a 0 ms timeout signal to immediately trigger abort.
         const aborted = AbortSignal.timeout(0);
         // Wait a tick so the signal is already aborted before we call ping.
