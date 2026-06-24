@@ -10,7 +10,7 @@
  * and a read-only lock.
  */
 
-import { type ReactElement, useCallback, useEffect, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
 import type { MedkitApiClient } from "./medkit-api";
 import type { Parameter, SovdResourceEntityType } from "./types";
@@ -68,14 +68,17 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
   const [parseError, setParseError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
 
   // Sync input when param value changes (e.g. after reload).
   // Depend on primitives only so an unrelated parent re-render that passes a
-  // new `param` object reference (same name/value) does NOT wipe an in-progress edit.
+  // new `param` object reference (same name/value) does NOT wipe an in-progress
+  // edit. `param.type` is included so a type change without a value change is
+  // still reflected; the whole `param` object is intentionally NOT a dep.
   useEffect(() => {
     setInputValue(defaultInputValue(param));
     setParseError(null);
-  }, [param.name, param.value]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [param.name, param.value, param.type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -94,7 +97,18 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
           return;
         }
       } else if (isNumericType(param.type)) {
-        parsed = Number(inputValue);
+        const n = Number(inputValue);
+        if (Number.isNaN(n)) {
+          setParseError("Must be a number");
+          return;
+        }
+        // Reject non-integer input for an int param (Number("3.9") would
+        // otherwise pass silently and serialize to a truncated/null value).
+        if (param.type === "int" && !Number.isInteger(n)) {
+          setParseError("Must be an integer");
+          return;
+        }
+        parsed = n;
       } else {
         parsed = inputValue;
       }
@@ -103,6 +117,26 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
       setSaving(false);
     }
   }, [param.name, param.type, inputValue, onSave]);
+
+  // Revert the input to the server value (Escape).
+  const handleRevert = useCallback(() => {
+    setInputValue(defaultInputValue(param));
+    setParseError(null);
+  }, [param]);
+
+  // Enter triggers save, Escape reverts.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void handleSave();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleRevert();
+      }
+    },
+    [handleSave, handleRevert],
+  );
 
   const handleBoolToggle = useCallback(async () => {
     setSaving(true);
@@ -158,10 +192,18 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
   let editor: ReactElement;
 
   if (param.read_only) {
+    const readonlyValue = JSON.stringify(param.value);
     editor = (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <code style={{ fontSize: 11, color: c.accent }}>{JSON.stringify(param.value)}</code>
-        <span style={lockedStyle}>(locked)</span>
+        <code
+          style={{ fontSize: 11, color: c.accent }}
+          aria-label={`${param.name}: ${readonlyValue} (read-only)`}
+        >
+          {readonlyValue}
+        </code>
+        <span style={lockedStyle} title="Read-only" aria-hidden="true">
+          (locked)
+        </span>
       </div>
     );
   } else if (isBoolType(param.type)) {
@@ -184,13 +226,17 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
       <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
         <div style={{ display: "flex", gap: 4 }}>
           <input
-            style={{ ...S.input(theme), flex: 1 }}
+            style={{ ...S.input(theme), flex: 1, ...S.focusRing(theme, inputFocused) }}
             value={inputValue}
             aria-label={`value for ${param.name}`}
+            aria-invalid={parseError != null}
             onChange={(e) => {
               setInputValue(e.target.value);
               setParseError(null);
             }}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
           />
           <button
             style={S.btn(theme)}
@@ -202,29 +248,50 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
           </button>
         </div>
         {parseError != null && (
-          <span style={{ fontSize: 11, color: c.critical }}>{parseError}</span>
+          <span role="alert" style={{ fontSize: 11, color: c.critical }}>
+            {parseError}
+          </span>
         )}
       </div>
     );
   } else {
     // string, int, double
     editor = (
-      <div style={{ display: "flex", gap: 4 }}>
-        <input
-          style={{ ...S.input(theme), flex: 1 }}
-          type={isNumericType(param.type) ? "number" : "text"}
-          value={inputValue}
-          aria-label={`value for ${param.name}`}
-          onChange={(e) => setInputValue(e.target.value)}
-        />
-        <button
-          style={S.btn(theme)}
-          disabled={saving}
-          aria-label={`save ${param.name}`}
-          onClick={() => void handleSave()}
-        >
-          Save
-        </button>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          <input
+            style={{ ...S.input(theme), flex: 1, ...S.focusRing(theme, inputFocused) }}
+            // Numeric params use a text input with a decimal inputMode (not
+            // type="number") so the component owns validation: a number input
+            // silently swallows bad keystrokes and would let the NaN/integer
+            // guards never fire. Matches web_ui's parse-on-submit approach.
+            type="text"
+            inputMode={isNumericType(param.type) ? "decimal" : undefined}
+            value={inputValue}
+            aria-label={`value for ${param.name}`}
+            aria-invalid={parseError != null}
+            onChange={(e) => {
+              setInputValue(e.target.value);
+              setParseError(null);
+            }}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+          />
+          <button
+            style={S.btn(theme)}
+            disabled={saving}
+            aria-label={`save ${param.name}`}
+            onClick={() => void handleSave()}
+          >
+            Save
+          </button>
+        </div>
+        {parseError != null && (
+          <span role="alert" style={{ fontSize: 11, color: c.critical }}>
+            {parseError}
+          </span>
+        )}
       </div>
     );
   }
@@ -267,16 +334,28 @@ export function ConfigurationsPanel({
   const [resetAllStatus, setResetAllStatus] = useState<string | null>(null);
   const [resettingAll, setResettingAll] = useState(false);
 
+  // Guards setState after awaits: an entity switch mid-save/reset must not
+  // write state into an unmounted component.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const result = await client.listConfigurations(entityType, entityId);
+      if (!mountedRef.current) return;
       setParameters(result.parameters);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load configurations");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [client, entityType, entityId]);
 
@@ -287,6 +366,7 @@ export function ConfigurationsPanel({
   const handleSave = useCallback(
     async (name: string, value: unknown) => {
       await client.setConfiguration(entityType, entityId, name, value);
+      if (!mountedRef.current) return;
       await load();
     },
     [client, entityType, entityId, load],
@@ -295,6 +375,7 @@ export function ConfigurationsPanel({
   const handleReset = useCallback(
     async (name: string) => {
       await client.resetConfiguration(entityType, entityId, name);
+      if (!mountedRef.current) return;
       await load();
     },
     [client, entityType, entityId, load],
@@ -305,16 +386,16 @@ export function ConfigurationsPanel({
     setResetAllStatus(null);
     try {
       const result = await client.resetAllConfigurations(entityType, entityId);
-      if (result != null && (result.reset_count != null || result.failed_count != null)) {
-        setResetAllStatus(
-          `Reset ${result.reset_count ?? 0}, ${result.failed_count ?? 0} failed`,
-        );
+      if (!mountedRef.current) return;
+      if (result != null) {
+        setResetAllStatus(`Reset ${result.reset_count}, ${result.failed_count} failed`);
       }
       await load();
     } catch (err) {
+      if (!mountedRef.current) return;
       setResetAllStatus(err instanceof Error ? err.message : "Reset all failed");
     } finally {
-      setResettingAll(false);
+      if (mountedRef.current) setResettingAll(false);
     }
   }, [client, entityType, entityId, load]);
 
@@ -342,8 +423,22 @@ export function ConfigurationsPanel({
     <div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6, gap: 6, alignItems: "center" }}>
         {resetAllStatus != null && (
-          <span style={{ fontSize: 12, color: c.textMuted }}>{resetAllStatus}</span>
+          <span
+            role="status"
+            aria-live="polite"
+            style={{ fontSize: 12, color: c.textMuted }}
+          >
+            {resetAllStatus}
+          </span>
         )}
+        <button
+          style={S.btn(theme, "ghost")}
+          disabled={loading}
+          aria-label="refresh configurations"
+          onClick={() => void load()}
+        >
+          Refresh
+        </button>
         <button
           style={S.btn(theme, "ghost")}
           disabled={resettingAll}

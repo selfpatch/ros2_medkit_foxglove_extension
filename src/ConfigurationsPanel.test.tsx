@@ -195,7 +195,9 @@ describe("ConfigurationsPanel - int/double parameter", () => {
     });
 
     const input = screen.getByLabelText(/value for max_speed/i);
-    expect(input).toHaveAttribute("type", "number");
+    // Numeric params use a text input with a decimal inputMode so the component
+    // can own validation (a type=number input swallows invalid keystrokes).
+    expect(input).toHaveAttribute("inputmode", "decimal");
 
     fireEvent.change(input, { target: { value: "25" } });
     fireEvent.click(screen.getByRole("button", { name: /save max_speed/i }));
@@ -213,7 +215,74 @@ describe("ConfigurationsPanel - int/double parameter", () => {
     renderPanel(client);
     await waitFor(() => {
       const input = screen.getByLabelText(/value for gain/i);
-      expect(input).toHaveAttribute("type", "number");
+      expect(input).toHaveAttribute("inputmode", "decimal");
+    });
+  });
+
+  it("rejects non-numeric input for an int param: shows inline error and does NOT call setConfiguration", async () => {
+    const param = makeParam({ name: "count", value: 1, type: "int" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for count/i)).toBeInTheDocument();
+    });
+
+    // The text input accepts arbitrary characters; the component validates on
+    // Save and must reject a non-numeric value (Number("abc") is NaN).
+    fireEvent.change(screen.getByLabelText(/value for count/i), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /save count/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/must be a number/i)).toBeInTheDocument();
+    });
+    expect(setConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("rejects a decimal for an int param: shows inline error and does NOT call setConfiguration", async () => {
+    const param = makeParam({ name: "count", value: 1, type: "int" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for count/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/value for count/i), { target: { value: "3.9" } });
+    fireEvent.click(screen.getByRole("button", { name: /save count/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/must be an integer/i)).toBeInTheDocument();
+    });
+    expect(setConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("accepts a decimal for a double param and calls setConfiguration with the numeric value", async () => {
+    const param = makeParam({ name: "gain", value: 0.5, type: "double" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for gain/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/value for gain/i), { target: { value: "3.9" } });
+    fireEvent.click(screen.getByRole("button", { name: /save gain/i }));
+
+    await waitFor(() => {
+      expect(setConfiguration).toHaveBeenCalledWith(ENTITY_TYPE, ENTITY_ID, "gain", 3.9);
     });
   });
 });
@@ -339,6 +408,8 @@ describe("ConfigurationsPanel - read-only parameter", () => {
     });
     // No save button for read-only param
     expect(screen.queryByRole("button", { name: /save hw_version/i })).not.toBeInTheDocument();
+    // No editable value input is rendered for a read-only param
+    expect(screen.queryByLabelText(/value for hw_version/i)).not.toBeInTheDocument();
   });
 });
 
@@ -383,13 +454,14 @@ describe("ConfigurationsPanel - Reset button", () => {
 // ---------------------------------------------------------------------------
 
 describe("ConfigurationsPanel - Reset All button", () => {
-  it("Reset All calls resetAllConfigurations; shows Reset N, M failed when result has counts", async () => {
+  it("Reset All calls resetAllConfigurations; shows Reset N, M failed from the derived counts and reloads", async () => {
     const param = makeParam({ name: "speed", value: 5, type: "int" });
+    // resetAllConfigurations returns the counts already DERIVED by medkit-api
+    // from the real ConfigurationDeleteMultiStatus 207 body (see medkit-api
+    // test for the derivation from the wire shape).
     const resetAllConfigurations = vi.fn().mockResolvedValue({ reset_count: 3, failed_count: 1 });
-    const client = makeClient({
-      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
-      resetAllConfigurations,
-    });
+    const listConfigurations = vi.fn().mockResolvedValue(makeConfigs([param]));
+    const client = makeClient({ listConfigurations, resetAllConfigurations });
     renderPanel(client);
 
     await waitFor(() => {
@@ -401,16 +473,16 @@ describe("ConfigurationsPanel - Reset All button", () => {
     await waitFor(() => {
       expect(resetAllConfigurations).toHaveBeenCalledWith(ENTITY_TYPE, ENTITY_ID);
       expect(screen.getByText("Reset 3, 1 failed")).toBeInTheDocument();
+      // reload: listConfigurations called at least twice (initial + after reset all)
+      expect(listConfigurations.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
-  it("Reset All with void result (no body) does not show status banner", async () => {
+  it("Reset All with undefined result (no body) does not show status banner but still reloads", async () => {
     const param = makeParam({ name: "speed", value: 5, type: "int" });
     const resetAllConfigurations = vi.fn().mockResolvedValue(undefined);
-    const client = makeClient({
-      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
-      resetAllConfigurations,
-    });
+    const listConfigurations = vi.fn().mockResolvedValue(makeConfigs([param]));
+    const client = makeClient({ listConfigurations, resetAllConfigurations });
     renderPanel(client);
 
     await waitFor(() => {
@@ -421,6 +493,7 @@ describe("ConfigurationsPanel - Reset All button", () => {
 
     await waitFor(() => {
       expect(resetAllConfigurations).toHaveBeenCalled();
+      expect(listConfigurations.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
   });
