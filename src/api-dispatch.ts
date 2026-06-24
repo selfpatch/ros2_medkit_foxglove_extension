@@ -242,6 +242,105 @@ export function getEntityFault(
 }
 
 // =============================================================================
+// Logs
+// =============================================================================
+
+/** Query params for GET .../logs. Schema marks query as `never` but the gateway
+ *  accepts severity and context at runtime - pass them as a plain record. */
+export interface EntityLogsParams {
+  severity?: string;
+  context?: string;
+}
+
+export function getEntityLogs(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  params?: EntityLogsParams,
+) {
+  // The generated schema marks query as `never` for the logs paths because no
+  // query params appear in the OpenAPI spec, but the gateway accepts severity
+  // and context at runtime. Use `as unknown` on only the path-param object to
+  // slip query past TypeScript without widening the path-string literal.
+  const query: Record<string, string> = {};
+  if (params?.severity) query.severity = params.severity;
+  if (params?.context) query.context = params.context;
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/logs", {
+        params: { path: { app_id: entityId }, query } as unknown as { path: { app_id: string } },
+      });
+    case "components":
+      return client.GET("/components/{component_id}/logs", {
+        params: { path: { component_id: entityId }, query } as unknown as { path: { component_id: string } },
+      });
+    case "areas":
+      return client.GET("/areas/{area_id}/logs", {
+        params: { path: { area_id: entityId }, query } as unknown as { path: { area_id: string } },
+      });
+    case "functions":
+      return client.GET("/functions/{function_id}/logs", {
+        params: { path: { function_id: entityId }, query } as unknown as { path: { function_id: string } },
+      });
+  }
+}
+
+export function getEntityLogsConfiguration(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/logs/configuration", {
+        params: { path: { app_id: entityId } },
+      });
+    case "components":
+      return client.GET("/components/{component_id}/logs/configuration", {
+        params: { path: { component_id: entityId } },
+      });
+    case "areas":
+      return client.GET("/areas/{area_id}/logs/configuration", {
+        params: { path: { area_id: entityId } },
+      });
+    case "functions":
+      return client.GET("/functions/{function_id}/logs/configuration", {
+        params: { path: { function_id: entityId } },
+      });
+  }
+}
+
+export function putEntityLogsConfiguration(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  body: { max_entries?: number | null; severity_filter?: string | null },
+) {
+  switch (entityType) {
+    case "apps":
+      return client.PUT("/apps/{app_id}/logs/configuration", {
+        params: { path: { app_id: entityId } },
+        body,
+      });
+    case "components":
+      return client.PUT("/components/{component_id}/logs/configuration", {
+        params: { path: { component_id: entityId } },
+        body,
+      });
+    case "areas":
+      return client.PUT("/areas/{area_id}/logs/configuration", {
+        params: { path: { area_id: entityId } },
+        body,
+      });
+    case "functions":
+      return client.PUT("/functions/{function_id}/logs/configuration", {
+        params: { path: { function_id: entityId } },
+        body,
+      });
+  }
+}
+
+// =============================================================================
 // Bulk Data
 // =============================================================================
 
