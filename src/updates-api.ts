@@ -4,7 +4,8 @@
 // canonical implementation in ros2_medkit_web_ui's `lib/updates-api.ts` so
 // the Foxglove panel and the web UI stay structurally identical.
 
-import { createMedkitClient, isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
+import { createGatewayClientForUrl, isMedkitError } from "./gateway-client";
+import type { MedkitClient } from "./gateway-client";
 
 export class UpdatesApiError extends Error {
     readonly status: number;
@@ -41,13 +42,30 @@ function throwFromClientError(error: unknown): never {
     throw new UpdatesApiError(msg, 0);
 }
 
+// Memo: reuse the last client for the same (baseUrl, fetch) pair so the
+// status-poll loop (which fires several times per cycle) does not allocate
+// a new openapi-fetch client on every call.
+let _memoClient: MedkitClient | undefined;
+let _memoBaseUrl: string | undefined;
+let _memoFetch: typeof fetch | undefined;
+
+function getClient(baseUrl: string, fetchImpl: typeof fetch): MedkitClient {
+    if (_memoClient && _memoBaseUrl === baseUrl && _memoFetch === fetchImpl) {
+        return _memoClient;
+    }
+    _memoClient = createGatewayClientForUrl(baseUrl, { fetch: fetchImpl });
+    _memoBaseUrl = baseUrl;
+    _memoFetch = fetchImpl;
+    return _memoClient;
+}
+
 /** GET /updates - returns list of update IDs (SOVD: `{items: [<id>]}`). */
 export async function fetchUpdateIds(
     baseUrl: string,
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<string[]> {
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { data, error } = await client.GET("/updates", { signal });
     if (error) throwFromClientError(error);
     // Accept both the SOVD `{items: [<id string>]}` shape and gateways that
@@ -73,7 +91,7 @@ export async function fetchUpdateStatus(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<UpdateStatus> {
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { data, error } = await client.GET("/updates/{update_id}/status", {
         params: { path: { update_id: id } },
         signal,
@@ -101,7 +119,7 @@ export async function fetchUpdateDetail(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { data, error } = await client.GET("/updates/{update_id}", {
         params: { path: { update_id: id } },
         signal,
@@ -120,11 +138,11 @@ export async function registerUpdate(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<void> {
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     // UpdateRegisterRequest schema is `{[key: string]: unknown}` - cast through
     // unknown to satisfy the typed body parameter.
     const { error } = await client.POST("/updates", {
-        body: metadata as unknown as Record<string, never>,
+        body: metadata as unknown as Record<string, unknown>,
         signal,
     });
     if (error) throwFromClientError(error);
@@ -141,7 +159,7 @@ export async function triggerPrepare(
     signal?: AbortSignal,
 ): Promise<void> {
     void body; // schema has no requestBody for this verb
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { error } = await client.PUT("/updates/{update_id}/prepare", {
         params: { path: { update_id: id } },
         signal,
@@ -158,7 +176,7 @@ export async function triggerExecute(
     signal?: AbortSignal,
 ): Promise<void> {
     void body;
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { error } = await client.PUT("/updates/{update_id}/execute", {
         params: { path: { update_id: id } },
         signal,
@@ -175,7 +193,7 @@ export async function triggerAutomated(
     signal?: AbortSignal,
 ): Promise<void> {
     void body;
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { error } = await client.PUT("/updates/{update_id}/automated", {
         params: { path: { update_id: id } },
         signal,
@@ -190,7 +208,7 @@ export async function deleteUpdate(
     fetchImpl: typeof fetch = fetch,
     signal?: AbortSignal,
 ): Promise<void> {
-    const client = createMedkitClient({ baseUrl, fetch: fetchImpl });
+    const client = getClient(baseUrl, fetchImpl);
     const { error } = await client.DELETE("/updates/{update_id}", {
         params: { path: { update_id: id } },
         signal,
