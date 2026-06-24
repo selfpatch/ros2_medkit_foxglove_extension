@@ -7,7 +7,7 @@
 The Entity Browser panel now includes a Logs tab for each entity:
 
 - Queries entity logs via `GET /{entity-type}/{id}/logs` with server-side severity
-  filtering (debug / info / warn / error / fatal) and a context search parameter
+  filtering (debug / info / warning / error / fatal) and a context search parameter
   (debounced, 300 ms).
 - Expandable rows reveal the source location (file:line), called function, and full
   ISO 8601 nanosecond timestamp.

@@ -181,10 +181,16 @@ export function emptyState(theme: Theme): CSSProperties {
   };
 }
 
+/**
+ * Map a log severity string to a display color.
+ * Gateway canonical values: debug / info / warning / error / fatal
+ * (`warning`, NOT `warn` - do not remap).
+ */
 export function severityColor(severity: string, theme: Theme): string {
   const c = colors(theme);
   switch (severity) {
     case "critical": return c.critical;
+    case "fatal": return c.critical;
     case "error": return c.error;
     case "warning": return c.warning;
     case "info": return c.info;
