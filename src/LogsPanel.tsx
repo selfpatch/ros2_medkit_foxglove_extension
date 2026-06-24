@@ -91,7 +91,8 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configSeverity, setConfigSeverity] = useState<LogSeverity>("debug");
-  const [configMaxEntries, setConfigMaxEntries] = useState(100);
+  /** null = unlimited (gateway's null = no cap); number = explicit cap */
+  const [configMaxEntries, setConfigMaxEntries] = useState<number | null>(100);
   const [configSaving, setConfigSaving] = useState(false);
   const [configError, setConfigError] = useState<string | undefined>(undefined);
 
@@ -126,34 +127,47 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   }, [entityId, entityType]);
 
   // ── Fetch ────────────────────────────────────────────────────────
-  const doFetch = useCallback(async () => {
+  // Returns an AbortController whose signal is passed to the fetch.
+  // Callers must call controller.abort() when the result is stale (entity
+  // changed, component unmounted) so a slow response never overwrites newer
+  // state.
+  const doFetch = useCallback((signal?: AbortSignal) => {
     setIsLoading(true);
     setLastRefreshFailed(false);
-    try {
-      const params: { severity?: LogSeverity; context?: string } = {};
-      if (severity !== "debug") params.severity = severity;
-      if (contextFilter) params.context = contextFilter;
-      const result = await client.listEntityLogs(entityType, entityId, params);
-      setEntries(result.items);
-      setAggregation(result["x-medkit"]);
-      setErrorStatus(null);
-      setShowAll(false);
-    } catch (err) {
-      if (err instanceof MedkitApiError && (err.status === 404 || err.status === 503)) {
-        setErrorStatus(err.status);
-        setEntries([]);
-        setAggregation(undefined);
-      } else {
-        setLastRefreshFailed(true);
-      }
-    } finally {
-      setIsLoading(false);
-    }
+    const params: { severity?: LogSeverity; context?: string } = {};
+    if (severity !== "debug") params.severity = severity;
+    if (contextFilter) params.context = contextFilter;
+    // `listEntityLogs` does not yet accept AbortSignal; we guard stale results
+    // via the signal check after the await instead.
+    void client.listEntityLogs(entityType, entityId, params).then(
+      (result) => {
+        if (signal?.aborted) return;
+        setEntries(result.items);
+        setAggregation(result["x-medkit"]);
+        setErrorStatus(null);
+      },
+      (err: unknown) => {
+        if (signal?.aborted) return;
+        if (err instanceof MedkitApiError && (err.status === 404 || err.status === 503)) {
+          setErrorStatus(err.status);
+          setEntries([]);
+          setAggregation(undefined);
+        } else {
+          setLastRefreshFailed(true);
+        }
+      },
+    ).finally(() => {
+      if (!signal?.aborted) setIsLoading(false);
+    });
   }, [client, entityType, entityId, severity, contextFilter]);
 
   // Initial load + re-fetch when entity/filters change.
+  // An AbortController aborts any in-flight fetch when params change or the
+  // component unmounts, preventing stale results from overwriting newer state.
   useEffect(() => {
-    void doFetch();
+    const controller = new AbortController();
+    doFetch(controller.signal);
+    return () => controller.abort();
   }, [doFetch]);
 
   // ── Visibility tracking ──────────────────────────────────────────
@@ -179,9 +193,9 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   // doFetch so the view is current.
   useEffect(() => {
     if (!autoRefreshEnabled || !isDocumentVisible) return;
-    void doFetch();
+    doFetch();
     const id = setInterval(() => {
-      void doFetch();
+      doFetch();
     }, refreshIntervalMs);
     return () => clearInterval(id);
   }, [autoRefreshEnabled, isDocumentVisible, refreshIntervalMs, doFetch]);
@@ -197,35 +211,45 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   }, []);
 
   // ── Config helpers ───────────────────────────────────────────────
-  const loadConfig = useCallback(async () => {
+  const loadConfig = useCallback(async (signal?: AbortSignal) => {
     setConfigLoading(true);
     setConfigError(undefined);
     try {
       const cfg = await client.getLogsConfiguration(entityType, entityId);
-      setConfigSeverity((cfg.severity_filter as LogSeverity) ?? "debug");
-      setConfigMaxEntries(cfg.max_entries ?? 100);
+      if (signal?.aborted) return;
+      const rawSeverity = cfg.severity_filter ?? "debug";
+      // Validate against the known set; fall back to "debug" if out of set.
+      const validatedSeverity: LogSeverity =
+        (SEVERITY_LEVELS as readonly string[]).includes(rawSeverity)
+          ? (rawSeverity as LogSeverity)
+          : "debug";
+      setConfigSeverity(validatedSeverity);
+      // null from the gateway means "unlimited"; preserve it rather than collapsing to 100.
+      setConfigMaxEntries(cfg.max_entries ?? null);
       setConfigLoaded(true);
     } catch {
-      setConfigError("Failed to load configuration");
+      if (!signal?.aborted) setConfigError("Failed to load configuration");
     } finally {
-      setConfigLoading(false);
+      if (!signal?.aborted) setConfigLoading(false);
     }
   }, [client, entityType, entityId]);
 
-  const handleConfigSave = useCallback(async () => {
-    if (configMaxEntries < 1 || configMaxEntries > 10000) return;
+  const handleConfigSave = useCallback(async (signal?: AbortSignal) => {
+    // null = unlimited (send null); number must be in 1-10000
+    if (configMaxEntries !== null && (configMaxEntries < 1 || configMaxEntries > 10000)) return;
     setConfigSaving(true);
     try {
       await client.updateLogsConfiguration(entityType, entityId, {
         severity_filter: configSeverity,
         max_entries: configMaxEntries,
       });
+      if (signal?.aborted) return;
       setConfigOpen(false);
-      void doFetch();
+      doFetch();
     } catch {
-      setConfigError("Failed to save configuration");
+      if (!signal?.aborted) setConfigError("Failed to save configuration");
     } finally {
-      setConfigSaving(false);
+      if (!signal?.aborted) setConfigSaving(false);
     }
   }, [client, entityType, entityId, configSeverity, configMaxEntries, doFetch]);
 
@@ -245,15 +269,16 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   const isCapped = !showAll && filtered.length > DISPLAY_CAP;
   const displayed = isCapped ? filtered.slice(0, DISPLAY_CAP) : filtered;
 
-  const configValid = configMaxEntries >= 1 && configMaxEntries <= 10000;
+  // null = unlimited (always valid); a number must be in 1-10000
+  const configValid = configMaxEntries === null || (configMaxEntries >= 1 && configMaxEntries <= 10000);
 
   // ── Toolbar ──────────────────────────────────────────────────────
   const toolbar = (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+      <label htmlFor="logs-severity-filter" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
         <span style={{ color: c.textMuted }}>Severity:</span>
         <select
-          aria-label="severity"
+          id="logs-severity-filter"
           style={{ ...S.input(theme), width: "auto", padding: "2px 6px" }}
           value={severity}
           onChange={(e) => setSeverity(e.target.value as LogSeverity)}
@@ -281,7 +306,7 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
       />
       <button
         style={S.btn(theme, "ghost")}
-        onClick={() => void doFetch()}
+        onClick={() => doFetch()}
         aria-label="Refresh"
         title="Refresh"
       >
@@ -319,9 +344,6 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
       >
         ⚙
       </button>
-      {lastRefreshFailed && (
-        <span style={{ fontSize: 11, color: c.critical }}>Last refresh failed</span>
-      )}
     </div>
   );
 
@@ -347,10 +369,10 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
         <span style={{ fontSize: 12, color: c.textMuted }}>Configuration not loaded</span>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <label htmlFor="config-severity-filter" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <span style={{ color: c.textMuted }}>Saved severity:</span>
             <select
-              aria-label="saved severity"
+              id="config-severity-filter"
               style={{ ...S.input(theme), width: "auto", padding: "2px 6px" }}
               value={configSeverity}
               onChange={(e) => setConfigSeverity(e.target.value as LogSeverity)}
@@ -360,18 +382,25 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
               ))}
             </select>
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <label htmlFor="config-max-entries" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <span style={{ color: c.textMuted }}>Max entries:</span>
             <input
               type="number"
-              aria-label="max entries"
+              id="config-max-entries"
               style={{ ...S.input(theme), width: 80 }}
-              value={configMaxEntries}
+              value={configMaxEntries ?? ""}
+              placeholder="unlimited"
               min={1}
               max={10000}
-              onChange={(e) => setConfigMaxEntries(Number(e.target.value))}
+              onChange={(e) => {
+                const v = e.target.value;
+                setConfigMaxEntries(v === "" ? null : Number(v));
+              }}
             />
           </label>
+          {configMaxEntries === null && (
+            <span style={{ fontSize: 11, color: c.textMuted }}>unlimited</span>
+          )}
           <button
             style={S.btn(theme)}
             disabled={!configValid || configSaving}
@@ -386,6 +415,30 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
       )}
     </div>
   );
+
+  // Aggregation header: rendered whenever aggregation metadata is present,
+  // regardless of whether rows pass the message search filter (item 9).
+  const aggregationHeader = aggregation?.aggregation_level ? (
+    <div
+      style={{
+        fontSize: 12,
+        color: c.textMuted,
+        padding: "4px 8px",
+        borderBottom: `1px solid ${c.borderLight}`,
+        marginBottom: 4,
+      }}
+      title={aggregation.aggregation_sources?.join("\n")}
+      aria-label="aggregation header"
+    >
+      Aggregated from{" "}
+      {aggregation.host_count ?? aggregation.aggregation_sources?.length ?? 0} sources
+      {aggregation.aggregation_sources != null && aggregation.aggregation_sources.length > 0 && (
+        <span style={{ color: c.textMuted }}>
+          {" "}({aggregation.aggregation_sources.join(", ")})
+        </span>
+      )}
+    </div>
+  ) : null;
 
   // ── Body ─────────────────────────────────────────────────────────
   let body: ReactElement;
@@ -402,46 +455,40 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
         ? "Logs not available on this gateway (no LogManager configured)"
         : "Logs not available for this entity (no LogManager configured)";
     body = (
-      <div style={{ ...S.emptyState(theme) }}>
-        <div style={{ marginBottom: 8 }}>{msg}</div>
-        <button style={S.btn(theme, "ghost")} onClick={() => void doFetch()}>Retry</button>
+      <div>
+        {aggregationHeader}
+        <div style={{ ...S.emptyState(theme) }}>
+          <div style={{ marginBottom: 8 }}>{msg}</div>
+          <button style={S.btn(theme, "ghost")} onClick={() => doFetch()}>Retry</button>
+        </div>
       </div>
     );
   } else if (displayed.length === 0) {
     body = (
-      <div style={S.emptyState(theme)}>
-        No log entries
-        {trimmedSearch || contextFilter || severity !== "debug"
-          ? " - try a lower severity or different filter"
-          : ""}
+      <div>
+        {aggregationHeader}
+        {lastRefreshFailed && (
+          <div style={{ ...S.errorBox(theme), marginBottom: 8, fontSize: 12 }}>
+            Last refresh failed - data may be stale
+          </div>
+        )}
+        <div style={S.emptyState(theme)}>
+          No log entries
+          {trimmedSearch || contextFilter || severity !== "debug"
+            ? " - try a lower severity or different filter"
+            : ""}
+        </div>
       </div>
     );
   } else {
     body = (
       <div>
-        {/* Aggregation header */}
-        {aggregation?.aggregation_level && (
-          <div
-            style={{
-              fontSize: 12,
-              color: c.textMuted,
-              padding: "4px 8px",
-              borderBottom: `1px solid ${c.borderLight}`,
-              marginBottom: 4,
-            }}
-            title={aggregation.aggregation_sources?.join("\n")}
-            aria-label="aggregation header"
-          >
-            Aggregated from{" "}
-            {aggregation.host_count ?? aggregation.aggregation_sources?.length ?? 0} sources
-            {aggregation.aggregation_sources && aggregation.aggregation_sources.length > 0 && (
-              <span style={{ color: c.textMuted }}>
-                {" "}({aggregation.aggregation_sources.join(", ")})
-              </span>
-            )}
+        {aggregationHeader}
+        {lastRefreshFailed && (
+          <div style={{ ...S.errorBox(theme), marginBottom: 8, fontSize: 12 }}>
+            Last refresh failed - data may be stale
           </div>
         )}
-
         <table style={{ ...S.table(theme), tableLayout: "fixed" }}>
           <thead>
             <tr>
@@ -452,29 +499,48 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
             </tr>
           </thead>
           <tbody>
-            {displayed.map((entry) => {
-              const isExpanded = expandedIds.has(entry.id);
+            {displayed.map((entry, idx) => {
+              // Use id+index as key to avoid collisions when the gateway returns
+              // duplicate ids (item 12). Expand state is also tracked by id+idx.
+              const rowKey = `${entry.id}-${idx}`;
+              const isExpanded = expandedIds.has(rowKey);
               const sevColor = S.severityColor(entry.severity, theme);
               return (
-                <Fragment key={entry.id}>
+                <Fragment key={rowKey}>
                   <tr
                     style={{
-                      cursor: "pointer",
                       background: isExpanded ? c.bgAlt : "transparent",
                     }}
-                    onClick={() => toggleExpand(entry.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleExpand(entry.id);
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={isExpanded}
                   >
-                    <td style={{ ...S.td(theme), fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>
-                      {formatTime(entry.timestamp)}
+                    {/* First cell contains the expand button (item 10): the
+                        interactive affordance lives on a real <button> inside
+                        the cell, not on the <tr> itself, so screen-reader table
+                        navigation is not overridden. */}
+                    <td style={{ ...S.td(theme), fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap", padding: 0 }}>
+                      <button
+                        style={{
+                          all: "unset",
+                          display: "block",
+                          width: "100%",
+                          padding: "4px 6px",
+                          cursor: "pointer",
+                          fontFamily: "monospace",
+                          fontSize: 11,
+                          whiteSpace: "nowrap",
+                          color: "inherit",
+                        }}
+                        onClick={() => toggleExpand(rowKey)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleExpand(rowKey);
+                          }
+                        }}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? "Collapse" : "Expand"} log entry at ${formatTime(entry.timestamp)}`}
+                      >
+                        {formatTime(entry.timestamp)}
+                      </button>
                     </td>
                     <td style={S.td(theme)}>
                       <span
@@ -568,16 +634,24 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
         {isCapped && (
           <div
             style={{
-              textAlign: "center",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
               padding: "8px 0",
               borderTop: `1px solid ${c.borderLight}`,
             }}
           >
+            {/* Status text and Show-all are separate so the button's accessible
+                name is only "Show all (N)", not the full status sentence (item 11). */}
+            <span style={{ fontSize: 12, color: c.textMuted }}>
+              Showing {DISPLAY_CAP} of {filtered.length} entries
+            </span>
             <button
               style={{ ...S.btn(theme, "ghost"), fontSize: 12 }}
               onClick={() => setShowAll(true)}
             >
-              Showing {DISPLAY_CAP} of {filtered.length} entries - Show all ({filtered.length})
+              Show all ({filtered.length})
             </button>
           </div>
         )}
