@@ -122,6 +122,57 @@ export function putEntityConfiguration(
   }
 }
 
+export function deleteEntityConfiguration(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  configId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.DELETE("/apps/{app_id}/configurations/{config_id}", {
+        params: { path: { app_id: entityId, config_id: configId } },
+      });
+    case "components":
+      return client.DELETE("/components/{component_id}/configurations/{config_id}", {
+        params: { path: { component_id: entityId, config_id: configId } },
+      });
+    case "areas":
+      return client.DELETE("/areas/{area_id}/configurations/{config_id}", {
+        params: { path: { area_id: entityId, config_id: configId } },
+      });
+    case "functions":
+      return client.DELETE("/functions/{function_id}/configurations/{config_id}", {
+        params: { path: { function_id: entityId, config_id: configId } },
+      });
+  }
+}
+
+export function deleteEntityConfigurations(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.DELETE("/apps/{app_id}/configurations", {
+        params: { path: { app_id: entityId } },
+      });
+    case "components":
+      return client.DELETE("/components/{component_id}/configurations", {
+        params: { path: { component_id: entityId } },
+      });
+    case "areas":
+      return client.DELETE("/areas/{area_id}/configurations", {
+        params: { path: { area_id: entityId } },
+      });
+    case "functions":
+      return client.DELETE("/functions/{function_id}/configurations", {
+        params: { path: { function_id: entityId } },
+      });
+  }
+}
+
 // =============================================================================
 // Operations
 // =============================================================================
