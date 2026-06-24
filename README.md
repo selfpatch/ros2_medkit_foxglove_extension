@@ -6,9 +6,10 @@ Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gate
 
 | Panel | Description |
 |-------|-------------|
-| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its data, operations, configurations, faults, and logs in tabbed detail view. The Operations tab builds a request/goal form from the operation schema, runs service or action operations, and for actions polls execution status with progress, cancel, and per-operation history. Edit ROS 2 parameters inline. The Logs tab queries entity logs with a severity filter and context search; rows are expandable to show the source location (file:line) and full timestamp; an aggregation header appears for function/area-level log aggregation; optional auto-refresh pauses automatically when the panel is not visible; a clear "no LogManager configured" state is shown when the gateway has no LogManager. |
+| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its resource tabs (capability-driven: only supported, non-empty tabs are shown, each with a count badge). The Data tab shows topic subscriptions and publishers. The Operations tab builds a request/goal form from the operation schema, runs service or action operations, and for actions polls execution status with progress, cancel, and per-operation history. The Configurations tab provides type-aware editors for each ROS 2 parameter (bool toggle, int/double numeric input, string field), plus a reset-all button and a read-only lock when no configurator role is present. The Logs tab queries entity logs with a severity filter and context search; rows are expandable to show the source location (file:line) and full timestamp; an aggregation header appears for function/area-level log aggregation; optional auto-refresh pauses automatically when the panel is not visible; a clear "no LogManager configured" state is shown when the gateway has no LogManager. |
 | **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
 | **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages (with client-side validation) and run Prepare, Execute, Prepare & execute, or Delete with live status polling and per-update progress. Delete, Execute, and Prepare & execute require confirmation; Prepare/Execute/Prepare & execute are disabled on completed/failed updates. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
+| **ros2_medkit Server Info** | Gateway overview: server version, supported capabilities, and API entry points. |
 
 ## Prerequisites
 
@@ -35,6 +36,7 @@ After `local-install`, restart Foxglove Studio and add panels from the panel men
 - **ros2_medkit Entity Browser**
 - **ros2_medkit Faults Dashboard**
 - **ros2_medkit Updates**
+- **ros2_medkit Server Info**
 
 ## Configuration
 
@@ -43,7 +45,7 @@ Each panel has a settings editor (gear icon) where you configure:
 - **Server URL** - Gateway address (e.g., `http://localhost:8080`)
 - **Base path** - API path prefix (default: `api/v1`)
 
-The Server URL and Base path are shared across all three panels (backed by
+The Server URL and Base path are shared across all four panels (backed by
 `localStorage`), so setting them on one panel updates the others. The Faults
 Dashboard has additional, panel-local settings for refresh rate and SSE
 streaming.
@@ -52,7 +54,7 @@ streaming.
 
 ```
 src/
-├── index.ts                   # Extension entry - registers all three panels
+├── index.ts                   # Extension entry - registers all four panels
 ├── types.ts                   # ros2_medkit gateway type definitions
 ├── gateway-client.ts          # Typed client factory (@selfpatch/ros2-medkit-client-ts)
 ├── api-dispatch.ts            # Per-entity-type typed path dispatch helpers
@@ -62,11 +64,13 @@ src/
 ├── panel-hooks.ts             # Shared hooks (connection, theme, dialog a11y)
 ├── schema-utils.ts            # JSON-schema to form model conversion + defaults
 ├── styles.ts                  # Inline style helpers (dark/light theme)
-├── EntityBrowserPanel.tsx     # Entity tree + detail tabs
+├── EntityBrowserPanel.tsx     # Entity tree + capability-driven detail tabs
+├── ConfigurationsPanel.tsx    # Configurations tab: type-aware editors + reset
 ├── FaultsDashboardPanel.tsx   # Faults monitoring + SSE
 ├── LogsPanel.tsx              # Logs tab (severity/context filter, expandable rows, auto-refresh)
 ├── OperationRequestForm.tsx   # Schema-driven request/goal form (controlled)
 ├── OperationsPanel.tsx        # Operation request forms + execution lifecycle
+├── ServerInfoPanel.tsx        # Server Info panel (gateway version, capabilities, API entry points)
 └── UpdatesPanel.tsx           # SOVD updates catalog + actions
 ```
 
