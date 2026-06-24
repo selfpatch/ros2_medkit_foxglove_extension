@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Capability-driven resource tabs in Entity Browser
+
+The Entity Browser tab bar is now driven by gateway capabilities and live resource
+counts:
+
+- Only tabs for capabilities reported as enabled by the gateway are shown.
+- Operations, Configurations, and Faults tabs are also hidden when the entity has zero
+  items (determined by a parallel prefetch on entity selection).
+- Each visible count-checked tab shows a count badge (e.g. "3" next to "configurations").
+- While the prefetch is in flight a skeleton placeholder row is shown instead of a
+  partial tab bar.
+- If the gateway does not expose a capabilities endpoint (fallback mode) all standard
+  tabs are shown without a prefetch, preserving the previous behavior.
+
+### Configurations tab: type-aware editors and reset
+
+The Configurations tab in the Entity Browser now provides full inline editing:
+
+- Each ROS 2 parameter is rendered with a type-aware editor: toggle for bool,
+  numeric input for int and double, text field for string.
+- Individual parameters can be saved one at a time with a Save button per row.
+- A Reset all button restores every parameter to its gateway-reported default in a
+  single request.
+- The entire tab is read-only when the gateway reports that the configurator
+  capability is not available for the entity.
+
+### ros2_medkit Server Info panel
+
+A new Server Info panel displays a live snapshot of the connected gateway:
+
+- Gateway version and server metadata.
+- List of supported capabilities as reported by `GET /`.
+- API entry points (links to resource collections exposed by the gateway).
+
 ### Logs tab in Entity Browser panel
 
 The Entity Browser panel now includes a Logs tab for each entity:
