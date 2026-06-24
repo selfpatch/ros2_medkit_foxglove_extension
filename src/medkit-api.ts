@@ -113,9 +113,7 @@ export class MedkitApiClient {
   async getVersionInfo(): Promise<VersionInfo> {
     const { data, error } = await this.client.GET("/version-info");
     if (error) throwApiError(error);
-    // The schema allows null in optional fields; the local VersionInfo type
-    // treats them as undefined-only. Cast through unknown to bridge the gap.
-    return data as unknown as VersionInfo;
+    return data;
   }
 
   // ── Entity tree ───────────────────────────────────────────────────
