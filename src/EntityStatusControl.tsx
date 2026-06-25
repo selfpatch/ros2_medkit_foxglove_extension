@@ -130,6 +130,17 @@ export function EntityStatusControl({
     loadStatus();
   }, [loadStatus]);
 
+  // Defense in depth: the parent keys this control per entity so it remounts on
+  // selection change, but don't rely on that - drop any armed confirmation,
+  // pending action, or error when the entity changes so they can't fire on the
+  // newly selected entity.
+  useEffect(() => {
+    setConfirmAction(null);
+    setPendingAction(null);
+    setActionError(null);
+    setActuationUnsupported(false);
+  }, [entityType, entityId]);
+
   const dispatchAction = useCallback(
     async (action: LifecycleAction) => {
       setPendingAction(action);

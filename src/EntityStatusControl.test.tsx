@@ -65,6 +65,27 @@ describe("EntityStatusControl - status display", () => {
     await waitFor(() => expect(screen.getByText("not available")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /^Start/ })).not.toBeInTheDocument();
   });
+
+  it("fails closed when the status read errors", async () => {
+    const setEntityStatus = vi.fn();
+    const client = makeClient({
+      getEntityStatus: vi.fn().mockRejectedValue(new Error("boom")),
+      setEntityStatus,
+    });
+    renderControl(client);
+    await waitFor(() => expect(screen.getByText("unknown")).toBeInTheDocument());
+    expect(screen.getByText(/Could not load status: boom/)).toBeInTheDocument();
+    // No transition links were resolved, so every action stays disabled.
+    for (const name of [
+      "Start app1",
+      "Restart app1",
+      "Force restart app1",
+      "Shutdown app1",
+      "Force shutdown app1",
+    ]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
 });
 
 describe("EntityStatusControl - action gating", () => {
@@ -129,6 +150,23 @@ describe("EntityStatusControl - transitions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Confirm/ }));
     await waitFor(() => expect(setEntityStatus).toHaveBeenCalledWith("apps", "app1", "shutdown"));
+  });
+
+  it("drops an armed confirmation when the entity changes (no carry-over)", async () => {
+    const setEntityStatus = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({ getEntityStatus: vi.fn().mockResolvedValue(READY), setEntityStatus });
+    // Render without a key remount so the SAME instance is reused across entities;
+    // this exercises the in-component reset, not React's key behavior.
+    const { rerender } = render(
+      <EntityStatusControl client={client} entityType="apps" entityId="app1" theme={THEME} />,
+    );
+    await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Shutdown app1" }));
+    expect(screen.getByRole("button", { name: /Confirm/ })).toBeInTheDocument();
+
+    rerender(<EntityStatusControl client={client} entityType="apps" entityId="app2" theme={THEME} />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Confirm/ })).not.toBeInTheDocument());
+    expect(setEntityStatus).not.toHaveBeenCalled();
   });
 
   it("cancels a destructive action without dispatching", async () => {

@@ -56,8 +56,9 @@ interface TreeNode {
 type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
 
 // Readiness shown by the entity-tree lamp. "unavailable" = gateway has no
-// lifecycle provider (501); "unknown" = not fetched / fetch failed.
-type TreeStatus = "ready" | "notReady" | "unavailable" | "unknown";
+// lifecycle provider (501); "unknown" = resolved but an unrecognized status;
+// "error" = the status read itself failed (transport/5xx).
+type TreeStatus = "ready" | "notReady" | "unavailable" | "unknown" | "error";
 
 // Tree-lamp polling: cap concurrent status reads (the gateway serializes them on
 // one reader) and refresh on this interval so a crashed node updates its lamp.
@@ -393,6 +394,9 @@ function EntityBrowserPanel({
   // poll. Areas and functions have no lifecycle status.
   const fetchLampStatuses = useCallback(async () => {
     if (!client) return;
+    // Bind the connection token so a slow read from a previous gateway can't
+    // stamp its readiness onto the tree after the operator switches gateways.
+    const mySeq = connSeqRef.current;
     const targets: { key: string; type: LifecycleEntityType; id: string }[] = [];
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
@@ -412,6 +416,7 @@ function EntityBrowserPanel({
         statusInFlightRef.current.add(t.key);
         try {
           const res = await client.getEntityStatus(t.type, t.id);
+          if (connSeqRef.current !== mySeq) return; // superseded by a newer connect
           const v: TreeStatus =
             res === "unavailable"
               ? "unavailable"
@@ -419,8 +424,13 @@ function EntityBrowserPanel({
                 ? res.status
                 : "unknown";
           setStatusByEntity((prev) => ({ ...prev, [t.key]: v }));
-        } catch {
-          setStatusByEntity((prev) => ({ ...prev, [t.key]: "unknown" }));
+        } catch (err) {
+          if (connSeqRef.current !== mySeq) return;
+          // A genuine read failure (transport/5xx) is distinct from "no provider"
+          // (501 -> "unavailable" above). Don't blank a lamp we already resolved
+          // on a transient blip; only mark "error" for a node we never resolved.
+          console.warn(`[EntityBrowser] lamp status read failed for ${t.key}:`, err);
+          setStatusByEntity((prev) => (t.key in prev ? prev : { ...prev, [t.key]: "error" }));
         } finally {
           statusInFlightRef.current.delete(t.key);
         }
@@ -745,16 +755,23 @@ export function TreeNodeRow({
   const hasChildren = node.entity.type !== "app" && node.entity.type !== "function";
   const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : node.entity.type === "function" ? "⚡" : "📦";
 
-  // Readiness lamp for apps/components. Green = ready, red = notReady. No lamp
-  // for unavailable/unknown (e.g. a gateway with no lifecycle provider), and
-  // none for areas/functions which have no lifecycle status.
+  // Readiness lamp for apps/components. Green = ready, amber = notReady, grey =
+  // status read failed. No lamp for unavailable (no lifecycle provider), unknown,
+  // or not-yet-fetched, and none for areas/functions (no lifecycle status).
   const lampType: LifecycleEntityType | null =
     node.entity.type === "app" ? "apps" : node.entity.type === "component" ? "components" : null;
   const lampStatus = lampType != null ? statusByEntity[`${lampType}:${node.entity.id}`] : undefined;
   // notReady uses the same amber as the detail badge (it means "not started",
   // not a fault), so the tree lamp and the detail control agree.
   const lampColor =
-    lampStatus === "ready" ? c.success : lampStatus === "notReady" ? c.warning : null;
+    lampStatus === "ready"
+      ? c.success
+      : lampStatus === "notReady"
+        ? c.warning
+        : lampStatus === "error"
+          ? c.textMuted
+          : null;
+  const lampTitle = lampStatus === "error" ? "status read failed" : lampStatus;
 
   return (
     <>
@@ -787,7 +804,7 @@ export function TreeNodeRow({
         {lampColor != null && (
           <span
             aria-label={`status ${lampStatus}`}
-            title={lampStatus}
+            title={lampTitle}
             style={{
               width: 8,
               height: 8,
