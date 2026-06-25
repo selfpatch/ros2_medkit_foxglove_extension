@@ -492,6 +492,16 @@ describe("deepMerge", () => {
         expect(deepMerge(target, {})).toEqual({ a: 1 });
     });
 
+    it("does not pollute Object.prototype via __proto__/constructor keys", () => {
+        // source can come from user-edited JSON, so dangerous keys must be skipped.
+        const malicious = JSON.parse('{"__proto__": {"polluted": true}, "constructor": {"x": 1}, "safe": 2}');
+        const result = deepMerge({ a: 1 }, malicious);
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+        expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+        // The legitimate key still merges.
+        expect(result.safe).toBe(2);
+    });
+
     it("overlays user values onto schema defaults (real use-case)", () => {
         const schema: TopicSchema = {
             linear: {

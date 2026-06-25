@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-### Publish to topics from the Data tab
+### Read and publish topic values from the Data tab
 
-The Data tab can now publish a message to a topic, not just list topics:
+The Data tab can now read a topic's current value and publish a message to it,
+not just list topics:
 
+- Each topic has a Read action that fetches the current sampled value
+  (`GET /{entity}/data/{topic}`) and shows it, with a Refresh button.
 - Each topic with a known message type gets a Publish action that opens an inline
   form. When the gateway exposes the topic's input schema the form is
   schema-driven (per-field editors); otherwise it falls back to a raw JSON editor.
