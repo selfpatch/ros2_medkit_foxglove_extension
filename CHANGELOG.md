@@ -8,8 +8,10 @@ The Entity Browser tab bar is now driven by gateway capabilities and live resour
 counts:
 
 - Only tabs for capabilities reported as enabled by the gateway are shown.
-- Operations, Configurations, and Faults tabs are also hidden when the entity has zero
-  items (determined by a parallel prefetch on entity selection).
+- Operations and Configurations tabs are also hidden when the entity has zero items
+  (determined by a parallel prefetch on entity selection). The Faults and Logs tabs
+  are not count-gated - faults arrive live, so the tab stays available whenever the
+  capability is present.
 - Each visible count-checked tab shows a count badge (e.g. "3" next to "configurations").
 - While the prefetch is in flight a skeleton placeholder row is shown instead of a
   partial tab bar.
@@ -23,9 +25,12 @@ The Configurations tab in the Entity Browser now provides full inline editing:
 - Each ROS 2 parameter is rendered with a type-aware editor: toggle for bool,
   numeric input for int and double, text field for string.
 - Individual parameters can be saved one at a time with a Save button per row.
-- A per-parameter Reset restores a single parameter to its gateway-reported default.
+- A per-parameter Reset restores a single parameter to its gateway-reported default;
+  a failed reset is surfaced inline rather than silently stopping the spinner.
 - A Reset all button restores every parameter to its gateway-reported default in a
-  single request; partial failures are surfaced as "Reset N, M failed".
+  single request. A clean reset is confirmed; partial failures are surfaced as
+  "Reset N of T node(s), M failed" (the gateway reports one result per backing node,
+  so the counts are node counts, not per-parameter).
 - Parameters the gateway marks read-only are shown locked, with no editor or
   Save/Reset controls.
 

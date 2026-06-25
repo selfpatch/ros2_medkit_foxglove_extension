@@ -61,7 +61,11 @@ const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", 
 //                                       enabled; no count prefetch)
 //   operations      -> "operations"   (shown when cap enabled AND count > 0)
 //   configurations  -> "configurations" (shown when cap enabled AND count > 0)
-//   faults          -> "faults"       (shown when cap enabled AND count > 0)
+//   faults          -> "faults"       (shown when cap enabled; no count gate -
+//                                       faults arrive live, and the prefetch only
+//                                       reruns on entity/caps change, so a count
+//                                       gate would hide the tab exactly when a new
+//                                       fault lands on the selected entity)
 //   logs            -> "logs"         (shown when cap enabled; no count check)
 // ---------------------------------------------------------------------------
 
@@ -77,7 +81,9 @@ function deriveVisibleTabs(capabilities: RootCapabilities | null, counts: Resour
   if (capabilities.data_access) tabs.push("data");
   if (capabilities.operations && counts !== null && counts.operations > 0) tabs.push("operations");
   if (capabilities.configurations && counts !== null && counts.configurations > 0) tabs.push("configurations");
-  if (capabilities.faults && counts !== null && counts.faults > 0) tabs.push("faults");
+  // Faults are not count-gated: a fault can arrive after the count prefetch ran,
+  // so gating would hide the tab the moment it is most needed (like logs).
+  if (capabilities.faults) tabs.push("faults");
   if (capabilities.logs) tabs.push("logs");
   return tabs;
 }
@@ -146,6 +152,10 @@ export function EntityBrowserTabBar({
     // run is the only one allowed to clear `prefetching`.
     let cancelled = false;
 
+    // These pull the full collections only to take `.length` for the tab counts.
+    // The SOVD API exposes no count/HEAD for these resources, so a full fetch is
+    // the only option; it doubles as the data the tabs need once selected. Kept
+    // deliberately rather than adding a bespoke count round-trip.
     const fetchOps = capabilities.operations
       ? client.listOperations(entityType, entityId).then((ops) => ops.length).catch(() => 0)
       : Promise.resolve(0);
@@ -284,6 +294,10 @@ function EntityBrowserPanel({
 
   // null = not yet fetched or getRoot failed (fallback mode)
   const [capabilities, setCapabilities] = useState<RootCapabilities | null>(null);
+  // Bumped on every connect attempt so a slow getRoot from a superseded
+  // connection cannot stamp the previous gateway's capabilities after a fast
+  // reconnect to a different server.
+  const connSeqRef = useRef(0);
 
   // Tree
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -337,6 +351,7 @@ function EntityBrowserPanel({
   // ── Connect ─────────────────────────────────────────────────────
 
   const doConnect = useCallback(async () => {
+    const mySeq = ++connSeqRef.current;
     const c = new MedkitApiClient(state.gatewayUrl, state.basePath);
     setConnError(undefined);
     // Reset stale capabilities from a prior connection: reconnecting to a
@@ -349,13 +364,21 @@ function EntityBrowserPanel({
         setConnError("Server not reachable");
         return;
       }
+      if (connSeqRef.current !== mySeq) return; // superseded by a newer connect
       setClient(c);
       setConnected(true);
 
       // Fetch capabilities from GET /. Failure is non-fatal: null = fallback mode.
-      void c.getRoot().then((root) => setCapabilities(root.capabilities)).catch(() => {
-        setCapabilities(null);
-      });
+      // Guard against a stale resolution stamping this (now-superseded) server's
+      // capabilities after a newer connect has started.
+      void c.getRoot().then(
+        (root) => {
+          if (connSeqRef.current === mySeq) setCapabilities(root.capabilities);
+        },
+        () => {
+          if (connSeqRef.current === mySeq) setCapabilities(null);
+        },
+      );
 
       // Load areas and functions in parallel.
       const [areas, funcs] = await Promise.all([
