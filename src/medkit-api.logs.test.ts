@@ -228,6 +228,25 @@ describe("MedkitApiClient.listEntityLogs", () => {
     expect(entry.context.line).toBe(42);
   });
 
+  it("normalizes severities to the LogSeverity union and falls back to info", async () => {
+    stubFetch({
+      items: [
+        { id: "log_1", timestamp: "2026-01-01T00:00:00.000Z", severity: "WARNING", message: "a", context: { node: "n" } },
+        { id: "log_2", timestamp: "2026-01-01T00:00:01.000Z", severity: "Fatal", message: "b", context: { node: "n" } },
+        { id: "log_3", timestamp: "2026-01-01T00:00:02.000Z", severity: "trace", message: "c", context: { node: "n" } },
+        { id: "log_4", timestamp: "2026-01-01T00:00:03.000Z", message: "d", context: { node: "n" } },
+      ],
+    });
+    const client = new MedkitApiClient("http://gw", "api/v1");
+    const result = await client.listEntityLogs("apps", "motor");
+    expect(result.items.map((e) => e.severity)).toEqual([
+      "warning", // WARNING -> lowercased, in-union
+      "fatal", // Fatal -> lowercased, in-union
+      "info", // trace -> unknown -> safe fallback
+      "info", // missing -> safe fallback
+    ]);
+  });
+
   it("preserves x-medkit aggregation metadata", async () => {
     stubFetch({
       items: [],

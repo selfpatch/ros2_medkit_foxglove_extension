@@ -6,7 +6,7 @@
 // show-all overflow control, 404/503 no-LogManager fallback, manual Refresh,
 // and auto-refresh with document-visibility pause.
 
-import { type ReactElement, Fragment, useCallback, useEffect, useState } from "react";
+import { type ReactElement, Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { type MedkitApiClient } from "./medkit-api";
 import { MedkitApiError } from "./gateway-client";
@@ -91,10 +91,23 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [configSeverity, setConfigSeverity] = useState<LogSeverity>("debug");
-  /** null = unlimited (gateway's null = no cap); number = explicit cap */
-  const [configMaxEntries, setConfigMaxEntries] = useState<number | null>(100);
+  // The gateway cap is a non-nullable 1..10000 size_t (no "unlimited"), so this
+  // is always a concrete number.
+  const [configMaxEntries, setConfigMaxEntries] = useState<number>(100);
   const [configSaving, setConfigSaving] = useState(false);
   const [configError, setConfigError] = useState<string | undefined>(undefined);
+
+  // Stale-result guards used by every fetch path (not just the param-effect's
+  // AbortController): a fetch that resolves after unmount or after an entity
+  // switch must never overwrite newer state.
+  const mountedRef = useRef(true);
+  const entityKeyRef = useRef(`${entityType}/${entityId}`);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // ── Debounce context filter ──────────────────────────────────────
   useEffect(() => {
@@ -104,6 +117,7 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
 
   // ── Reset on entity change ───────────────────────────────────────
   useEffect(() => {
+    entityKeyRef.current = `${entityType}/${entityId}`;
     setEntries([]);
     setAggregation(undefined);
     setIsLoading(true);
@@ -127,27 +141,29 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   }, [entityId, entityType]);
 
   // ── Fetch ────────────────────────────────────────────────────────
-  // Returns an AbortController whose signal is passed to the fetch.
-  // Callers must call controller.abort() when the result is stale (entity
-  // changed, component unmounted) so a slow response never overwrites newer
-  // state.
+  // `signal` (from the param-effect's AbortController) plus the mountedRef /
+  // entityKeyRef guards ensure a slow response never overwrites newer state,
+  // regardless of which path triggered the fetch (param-effect, auto-refresh,
+  // manual Refresh, post-save reload, or retry).
   const doFetch = useCallback((signal?: AbortSignal) => {
+    const key = `${entityType}/${entityId}`;
+    const isStale = () => signal?.aborted === true || !mountedRef.current || entityKeyRef.current !== key;
     setIsLoading(true);
     setLastRefreshFailed(false);
     const params: { severity?: LogSeverity; context?: string } = {};
     if (severity !== "debug") params.severity = severity;
     if (contextFilter) params.context = contextFilter;
     // `listEntityLogs` does not yet accept AbortSignal; we guard stale results
-    // via the signal check after the await instead.
+    // via isStale() after the await instead.
     void client.listEntityLogs(entityType, entityId, params).then(
       (result) => {
-        if (signal?.aborted) return;
+        if (isStale()) return;
         setEntries(result.items);
         setAggregation(result["x-medkit"]);
         setErrorStatus(null);
       },
       (err: unknown) => {
-        if (signal?.aborted) return;
+        if (isStale()) return;
         if (err instanceof MedkitApiError && (err.status === 404 || err.status === 503)) {
           setErrorStatus(err.status);
           setEntries([]);
@@ -157,9 +173,17 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
         }
       },
     ).finally(() => {
-      if (!signal?.aborted) setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     });
   }, [client, entityType, entityId, severity, contextFilter]);
+
+  // Keep a ref to the latest doFetch so the auto-refresh interval can call it
+  // without listing doFetch as a dep (which would re-run the effect on every
+  // filter change and fire a redundant leading fetch alongside the param-effect).
+  const doFetchRef = useRef(doFetch);
+  useEffect(() => {
+    doFetchRef.current = doFetch;
+  }, [doFetch]);
 
   // Initial load + re-fetch when entity/filters change.
   // An AbortController aborts any in-flight fetch when params change or the
@@ -193,12 +217,16 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   // doFetch so the view is current.
   useEffect(() => {
     if (!autoRefreshEnabled || !isDocumentVisible) return;
-    doFetch();
+    // Leading fetch only on enable / visibility-resume - NOT on filter changes
+    // (doFetch is read via the ref, so this effect no longer re-runs when the
+    // filters change; the param-effect owns the leading-edge fetch there). This
+    // prevents a redundant second fetch racing the param-effect's.
+    doFetchRef.current();
     const id = setInterval(() => {
-      doFetch();
+      doFetchRef.current();
     }, refreshIntervalMs);
     return () => clearInterval(id);
-  }, [autoRefreshEnabled, isDocumentVisible, refreshIntervalMs, doFetch]);
+  }, [autoRefreshEnabled, isDocumentVisible, refreshIntervalMs]);
 
   // ── Row expand toggle ────────────────────────────────────────────
   const toggleExpand = useCallback((id: string) => {
@@ -224,8 +252,8 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
           ? (rawSeverity as LogSeverity)
           : "debug";
       setConfigSeverity(validatedSeverity);
-      // null from the gateway means "unlimited"; preserve it rather than collapsing to 100.
-      setConfigMaxEntries(cfg.max_entries ?? null);
+      // The gateway always returns a concrete cap; fall back to 100 defensively.
+      setConfigMaxEntries(cfg.max_entries ?? 100);
       setConfigLoaded(true);
     } catch {
       if (!signal?.aborted) setConfigError("Failed to load configuration");
@@ -235,8 +263,9 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   }, [client, entityType, entityId]);
 
   const handleConfigSave = useCallback(async (signal?: AbortSignal) => {
-    // null = unlimited (send null); number must be in 1-10000
-    if (configMaxEntries !== null && (configMaxEntries < 1 || configMaxEntries > 10000)) return;
+    // The gateway cap must be a concrete 1..10000 value (it rejects 0 and
+    // ignores null), so reject anything out of range rather than no-op silently.
+    if (!Number.isInteger(configMaxEntries) || configMaxEntries < 1 || configMaxEntries > 10000) return;
     setConfigSaving(true);
     try {
       await client.updateLogsConfiguration(entityType, entityId, {
@@ -266,11 +295,17 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   const filtered = trimmedSearch
     ? entries.filter((e) => e.message.toLowerCase().includes(trimmedSearch))
     : entries;
-  const isCapped = !showAll && filtered.length > DISPLAY_CAP;
-  const displayed = isCapped ? filtered.slice(0, DISPLAY_CAP) : filtered;
+  // The gateway returns entries oldest-first (ascending by id) and drops from
+  // the front when over its own cap. Show newest-first and, when capping the
+  // display, keep the newest DISPLAY_CAP - not the oldest - so opening the tab
+  // on a busy entity shows what just happened rather than stale history.
+  const ordered = [...filtered].reverse();
+  const isCapped = !showAll && ordered.length > DISPLAY_CAP;
+  const displayed = isCapped ? ordered.slice(0, DISPLAY_CAP) : ordered;
 
-  // null = unlimited (always valid); a number must be in 1-10000
-  const configValid = configMaxEntries === null || (configMaxEntries >= 1 && configMaxEntries <= 10000);
+  // The cap must be an integer in 1..10000 (the gateway has no "unlimited").
+  const configValid =
+    Number.isInteger(configMaxEntries) && configMaxEntries >= 1 && configMaxEntries <= 10000;
 
   // ── Toolbar ──────────────────────────────────────────────────────
   const toolbar = (
@@ -312,6 +347,11 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
       >
         ↻ Refresh
       </button>
+      {isLoading && entries.length > 0 && (
+        <span style={{ fontSize: 11, color: c.textMuted }} role="status" aria-label="Refreshing">
+          Refreshing...
+        </span>
+      )}
       <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
         <input
           type="checkbox"
@@ -388,19 +428,12 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
               type="number"
               id="config-max-entries"
               style={{ ...S.input(theme), width: 80 }}
-              value={configMaxEntries ?? ""}
-              placeholder="unlimited"
+              value={Number.isNaN(configMaxEntries) ? "" : configMaxEntries}
               min={1}
               max={10000}
-              onChange={(e) => {
-                const v = e.target.value;
-                setConfigMaxEntries(v === "" ? null : Number(v));
-              }}
+              onChange={(e) => setConfigMaxEntries(e.target.value === "" ? NaN : Number(e.target.value))}
             />
           </label>
-          {configMaxEntries === null && (
-            <span style={{ fontSize: 11, color: c.textMuted }}>unlimited</span>
-          )}
           <button
             style={S.btn(theme)}
             disabled={!configValid || configSaving}
@@ -443,7 +476,11 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
   // ── Body ─────────────────────────────────────────────────────────
   let body: ReactElement;
 
-  if (isLoading) {
+  // Full-screen loader only on the initial/empty load. A background refresh
+  // (auto-refresh tick or manual Refresh while rows are shown) keeps the table
+  // mounted - a small toolbar indicator covers it - so a live tail no longer
+  // blanks the table every cycle.
+  if (isLoading && entries.length === 0 && errorStatus === null) {
     body = (
       <div style={{ ...S.emptyState(theme) }} role="status" aria-label="Loading logs">
         Loading logs...
@@ -499,14 +536,14 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
             </tr>
           </thead>
           <tbody>
-            {displayed.map((entry, idx) => {
-              // Use id+index as key to avoid collisions when the gateway returns
-              // duplicate ids (item 12). Expand state is also tracked by id+idx.
-              const rowKey = `${entry.id}-${idx}`;
-              const isExpanded = expandedIds.has(rowKey);
+            {displayed.map((entry) => {
+              // Gateway log ids (log_<n>) are unique, so key by id alone. A
+              // positional suffix would change every row's key as the gateway
+              // drops the oldest entries on refresh, scrambling expand state.
+              const isExpanded = expandedIds.has(entry.id);
               const sevColor = S.severityColor(entry.severity, theme);
               return (
-                <Fragment key={rowKey}>
+                <Fragment key={entry.id}>
                   <tr
                     style={{
                       background: isExpanded ? c.bgAlt : "transparent",
@@ -529,11 +566,11 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
                           whiteSpace: "nowrap",
                           color: "inherit",
                         }}
-                        onClick={() => toggleExpand(rowKey)}
+                        onClick={() => toggleExpand(entry.id)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            toggleExpand(rowKey);
+                            toggleExpand(entry.id);
                           }
                         }}
                         aria-expanded={isExpanded}
@@ -663,6 +700,12 @@ export function LogsPanel({ client, entityType, entityId, theme }: LogsPanelProp
     <div>
       {toolbar}
       {configPanel}
+      {trimmedSearch && (
+        <div style={{ fontSize: 11, color: c.textMuted, marginBottom: 6 }} aria-label="search scope note">
+          Message search matches only the currently loaded page; the gateway caps
+          how many entries it returns, so a match in an older entry may not appear.
+        </div>
+      )}
       {body}
     </div>
   );
