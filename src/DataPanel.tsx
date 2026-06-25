@@ -7,7 +7,7 @@
 // schema, or a raw JSON editor otherwise - and PUTs { type, data }, which the
 // gateway turns into a one-shot publisher.
 
-import { type ReactElement, Fragment, useCallback, useState } from "react";
+import { type ReactElement, Fragment, useCallback, useRef, useState } from "react";
 
 import { type MedkitApiClient } from "./medkit-api";
 import { OperationRequestForm } from "./OperationRequestForm";
@@ -38,24 +38,36 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  // Publishing to a live topic can actuate hardware, so it's two-step: the
+  // form's Publish button arms this, and Confirm sends.
+  const [confirmPublish, setConfirmPublish] = useState(false);
 
   // Read state
   const [readValue, setReadValue] = useState<unknown>(undefined);
+  const [readStatus, setReadStatus] = useState<"data" | "metadata_only" | null>(null);
   const [readLoading, setReadLoading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
+  // Monotonic token so a slow read can't overwrite a newer one (e.g. switching
+  // the open Read row from topic A to topic B before A's fetch resolves).
+  const readSeqRef = useRef(0);
 
   const readTopic = useCallback(
     async (topic: string) => {
+      const seq = ++readSeqRef.current;
       setReadLoading(true);
       setReadError(null);
       setReadValue(undefined);
+      setReadStatus(null);
       try {
         const res = await client.getTopicData(entityType, entityId, topic);
+        if (readSeqRef.current !== seq) return; // superseded by a newer read
         setReadValue(res.data);
+        setReadStatus(res.status ?? "data");
       } catch (err) {
+        if (readSeqRef.current !== seq) return;
         setReadError(err instanceof Error ? err.message : "Read failed");
       } finally {
-        setReadLoading(false);
+        if (readSeqRef.current === seq) setReadLoading(false);
       }
     },
     [client, entityType, entityId],
@@ -65,6 +77,7 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
     (t: ComponentTopic, mode: Mode) => {
       setPublishResult(null);
       setPublishError(null);
+      setConfirmPublish(false);
       if (open?.topic === t.topic && open.mode === mode) {
         setOpen(null); // toggle closed
         return;
@@ -80,6 +93,30 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
     [open, readTopic],
   );
 
+  // Validate the payload and arm the confirmation. Publishing to a live topic
+  // can actuate hardware (e.g. a non-zero Twist on /cmd_vel moves the robot), so
+  // it confirms first, like the lifecycle and Updates panels.
+  const requestPublish = useCallback(
+    (t: ComponentTopic) => {
+      if (!t.type) return;
+      if (!t.schema) {
+        try {
+          JSON.parse(jsonText);
+        } catch {
+          // Clear any prior success so a stale "Published..." never sits next to
+          // the parse error.
+          setPublishResult(null);
+          setPublishError("Message must be valid JSON");
+          return;
+        }
+      }
+      setPublishError(null);
+      setPublishResult(null);
+      setConfirmPublish(true);
+    },
+    [jsonText],
+  );
+
   const handlePublish = useCallback(
     async (t: ComponentTopic) => {
       if (!t.type) return;
@@ -90,10 +127,13 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
         try {
           data = JSON.parse(jsonText);
         } catch {
+          setPublishResult(null);
+          setConfirmPublish(false);
           setPublishError("Message must be valid JSON");
           return;
         }
       }
+      setConfirmPublish(false);
       setPublishing(true);
       setPublishError(null);
       setPublishResult(null);
@@ -136,8 +176,12 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
       <tbody>
         {topics.map((t) => {
           // The gateway needs a "pkg/msg/Type" type to construct the publisher;
-          // a topic without a known type can't be published to.
-          const canPublish = typeof t.type === "string" && t.type.length > 0;
+          // a topic without a known type can't be published to. We also withhold
+          // Publish for output-only topics (ones the entity only publishes, e.g.
+          // a sensor /scan): injecting there races the real data downstream nodes
+          // consume as ground truth. Read stays available for every topic.
+          const publisherOnly = t.isPublisher === true && t.isSubscriber !== true;
+          const canPublish = typeof t.type === "string" && t.type.length > 0 && !publisherOnly;
           const isOpen = open?.topic === t.topic;
           return (
             <Fragment key={t.topic}>
@@ -199,7 +243,9 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
                         <div style={{ ...S.errorBox(theme), marginTop: 0, marginBottom: 0, fontSize: 11 }}>{readError}</div>
                       ) : readLoading ? (
                         <div style={{ fontSize: 12, color: c.textMuted }}>Reading...</div>
-                      ) : readValue == null ? (
+                      ) : readStatus === "metadata_only" || readValue == null ? (
+                        // The gateway returns an empty body with status
+                        // "metadata_only" for a topic it has never sampled.
                         <div style={{ fontSize: 12, color: c.textMuted }}>No data sampled for this topic.</div>
                       ) : (
                         <pre style={preStyle}>{JSON.stringify(readValue, null, 2)}</pre>
@@ -238,14 +284,34 @@ export function DataPanel({ client, entityType, entityId, topics, theme }: DataP
                       {publishResult != null && (
                         <div style={{ fontSize: 11, color: c.success }}>{publishResult}</div>
                       )}
-                      <button
-                        style={{ ...S.btn(theme, "primary"), alignSelf: "flex-start" }}
-                        disabled={publishing}
-                        aria-label={`Send ${t.topic}`}
-                        onClick={() => void handlePublish(t)}
-                      >
-                        {publishing ? "Publishing..." : "Publish"}
-                      </button>
+                      {confirmPublish ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 12, color: c.text }}>Publish to {t.topic}?</span>
+                          <button
+                            style={{ ...S.btn(theme, "danger"), fontSize: 11, padding: "2px 8px" }}
+                            disabled={publishing}
+                            aria-label={`Confirm publish to ${t.topic}`}
+                            onClick={() => void handlePublish(t)}
+                          >
+                            {publishing ? "Publishing..." : "Confirm"}
+                          </button>
+                          <button
+                            style={{ ...S.btn(theme, "ghost"), fontSize: 11, padding: "2px 8px" }}
+                            aria-label="Cancel publish"
+                            onClick={() => setConfirmPublish(false)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          style={{ ...S.btn(theme, "primary"), alignSelf: "flex-start" }}
+                          aria-label={`Send ${t.topic}`}
+                          onClick={() => requestPublish(t)}
+                        >
+                          Publish
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
