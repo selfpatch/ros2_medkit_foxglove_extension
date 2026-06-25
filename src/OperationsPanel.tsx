@@ -12,6 +12,7 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
 import { type MedkitApiClient } from "./medkit-api";
+import { MedkitApiError } from "./gateway-client";
 import { OperationRequestForm } from "./OperationRequestForm";
 import { getSchemaDefaults } from "./schema-utils";
 import type { TopicSchema } from "./schema-utils";
@@ -29,6 +30,10 @@ import type { Theme } from "./styles";
 // never overlap regardless of gateway latency.
 const POLL_INTERVAL_MS = 1000;
 
+// After this many consecutive transient (5xx / network) poll failures, give up
+// rather than looping forever on a gateway that never recovers.
+const MAX_POLL_FAILURES = 5;
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -45,10 +50,11 @@ function statusColor(status: ExecutionStatus, c: ReturnType<typeof S.colors>): s
 }
 
 // Map a createExecution response status to the execution-lifecycle status used
-// for the active-execution view. The async-202 alias "accepted" is shown as
-// "pending" (the gateway never emits "accepted" on the executions/{id} poll).
+// for the active-execution view. The async (202) response carries
+// status:"running"; default to "running" if a producer omits it, since an
+// execution with an id is already in flight.
 function initialActiveStatus(status: CreateExecutionResponse["status"]): ExecutionStatus {
-  return status === "accepted" ? "pending" : status;
+  return status ?? "running";
 }
 
 // =============================================================================
@@ -103,18 +109,21 @@ function ResponseDisplay({ response, theme }: ResponseDisplayProps): ReactElemen
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <span style={S.badge("#fff", c.success)}>service</span>
-        <span style={S.badge(c.text, c.bgCard)}>{response.status}</span>
+        {/* The gateway's synchronous service response is `{parameters}` only -
+            no status/kind field - so a status badge is shown only on the rare
+            path where a producer does include one. */}
+        {response.status != null && (
+          <span style={S.badge(c.text, c.bgCard)}>{response.status}</span>
+        )}
       </div>
 
-      {response.result != null && (
-        <pre style={preStyle}>{JSON.stringify(response.result, null, 2)}</pre>
-      )}
-      {response.parameters != null && (
+      {/* The service result is returned under `parameters` (the gateway maps the
+          service response into it). */}
+      {response.parameters != null ? (
         <pre style={preStyle}>{JSON.stringify(response.parameters, null, 2)}</pre>
-      )}
-      {response.result == null && response.parameters == null && (
+      ) : (
         <div style={{ fontSize: 12, color: c.textMuted }}>
-          Service completed with status: {response.status}
+          Service completed (no result payload).
         </div>
       )}
 
@@ -413,14 +422,16 @@ export function OperationsPanel({
     setPolling(false);
   }, []);
 
-  // Append a terminal entry to a given op's history, deduped by execution id so a
-  // poll-tick terminal and a cancel cannot double-insert the same id (which would
-  // produce duplicate React keys). Capped at the most recent 10.
+  // Append a terminal entry to a given op's history, deduped by execution id
+  // across the whole (capped) bucket. First write wins: if a poll-tick already
+  // logged a real terminal (completed/failed) for this id, a later cancel's
+  // "canceled" entry is dropped, so the history and active panel cannot disagree
+  // for the same execution. Capped at the most recent 10.
   const appendHistory = useCallback(
     (opName: string, entry: ExecutionHistoryEntry) => {
       setHistoryByOp((prev) => {
         const bucket = prev[opName] ?? [];
-        if (bucket[0]?.id === entry.id) return prev; // already the latest entry
+        if (bucket.some((e) => e.id === entry.id)) return prev; // already logged
         return { ...prev, [opName]: [entry, ...bucket.slice(0, 9)] };
       });
     },
@@ -482,21 +493,45 @@ export function OperationsPanel({
     if (opName == null) return;
 
     const mySeq = ++pollSeqRef.current;
+    let consecutiveFailures = 0;
+
+    // Stop the loop and record a terminal failure entry. Used when polling can
+    // never recover (the goal is gone, or too many transient errors in a row).
+    const failTerminally = (message: string): void => {
+      timeoutRef.current = null;
+      setPolling(false);
+      setRunError(message);
+      appendHistory(opName, { id: execId, timestamp: new Date(), terminalStatus: "failed" });
+    };
 
     const tick = async (): Promise<void> => {
       if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
       let exec;
       try {
         exec = await client.getExecution(entityType, entityId, opName, execId);
-      } catch {
-        // Transient poll error: re-check liveness, then retry on the next tick.
-        if (mountedRef.current && pollSeqRef.current === mySeq) {
-          timeoutRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+      } catch (err) {
+        if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
+        const status = err instanceof MedkitApiError ? err.status : undefined;
+        // A 4xx (notably 404 once the gateway evicts a terminal/stuck goal) is
+        // terminal - retrying can never recover it. Stop, surface it, and log a
+        // terminal entry instead of looping silently on "Polling...".
+        if (status != null && status >= 400 && status < 500) {
+          const detail = err instanceof Error ? err.message : `HTTP ${status}`;
+          failTerminally(`Execution polling stopped: ${detail}`);
+          return;
         }
+        // Transient (5xx / network): retry up to a cap, then give up.
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_POLL_FAILURES) {
+          failTerminally(`Execution polling stopped after ${MAX_POLL_FAILURES} consecutive errors`);
+          return;
+        }
+        timeoutRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
         return;
       }
       // Re-check after the await: discard if unmounted or superseded.
       if (!mountedRef.current || pollSeqRef.current !== mySeq) return;
+      consecutiveFailures = 0; // a successful poll resets the transient counter
 
       setActiveExecution({
         id: execId,
@@ -562,14 +597,21 @@ export function OperationsPanel({
     stopPolling();
     try {
       await client.cancelExecution(entityType, entityId, opName, execId);
-    } catch {
-      // still show canceled in UI
+    } catch (err) {
+      // The DELETE failed - the execution was NOT canceled, so do not stamp it
+      // canceled. Surface the failure instead.
+      if (mountedRef.current) {
+        setRunError(err instanceof Error ? err.message : "Cancel failed");
+        setCancelBusy(false);
+      }
+      return;
     }
     if (mountedRef.current) {
       const canceledStatus: ExecutionStatus = "canceled";
       setActiveExecution((prev) => (prev != null ? { ...prev, status: canceledStatus } : null));
-      // appendHistory dedupes by id, so a terminal poll-tick that already logged
-      // this execution will not be double-inserted here.
+      // appendHistory dedupes by id across the bucket, so if a terminal poll-tick
+      // already logged this execution its status wins and this canceled entry is
+      // dropped (no history/panel disagreement).
       appendHistory(opName, { id: execId, timestamp: new Date(), terminalStatus: canceledStatus });
       setCancelBusy(false);
     }
@@ -584,10 +626,14 @@ export function OperationsPanel({
     setActiveExecution(null);
 
     try {
+      // Include `type` only when the operation has a non-empty type. The gateway
+      // treats a present body `type` (even "") as an override of the discovered
+      // action/service type, so sending type:"" breaks introspection.
+      const typeField = selectedOp.type ? { type: selectedOp.type } : {};
       const request =
         selectedOp.kind === "action"
-          ? { type: selectedOp.type, goal: formValue }
-          : { type: selectedOp.type, request: formValue };
+          ? { ...typeField, goal: formValue }
+          : { ...typeField, request: formValue };
 
       const res = await client.createExecution(entityType, entityId, selectedOp.name, request);
 
