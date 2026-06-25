@@ -132,19 +132,20 @@ describe("EntityBrowserTabBar - data tab", () => {
 // Tests: tab hidden when count is 0
 // ---------------------------------------------------------------------------
 
-describe("EntityBrowserTabBar - count=0 hides tab", () => {
-  it("hides operations tab when prefetch returns 0 operations", async () => {
+describe("EntityBrowserTabBar - zero count does not hide a tab", () => {
+  // Visibility is capability-only: a count of 0 must NOT hide a tab, so an entity
+  // with no items still exposes the tab (its panel shows an empty state inside).
+  it("shows operations tab even when there are 0 operations", async () => {
     const client = makeClient({
       listOperations: vi.fn().mockResolvedValue([]),
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => expect(client.listOperations).toHaveBeenCalled());
-    // Wait for render after prefetch
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
   });
 
-  it("hides configurations tab when prefetch returns 0 parameters", async () => {
+  it("shows configurations tab even when there are 0 parameters", async () => {
     const client = makeClient({
       listConfigurations: vi.fn().mockResolvedValue({
         component_id: "e1", node_name: "n1", parameters: [],
@@ -153,12 +154,10 @@ describe("EntityBrowserTabBar - count=0 hides tab", () => {
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => expect(client.listConfigurations).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("tab", { name: /^configurations/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
   });
 
-  it("still shows the faults tab when prefetch returns 0 faults (not count-gated)", async () => {
-    // Faults arrive live, so the tab is shown whenever the capability is present
-    // (like logs) rather than being gated on the prefetched count.
+  it("shows the faults tab when there are 0 faults", async () => {
     const client = makeClient({
       listEntityFaults: vi.fn().mockResolvedValue({ items: [], count: 0 }),
     });
@@ -309,6 +308,16 @@ describe("EntityBrowserTabBar - null capabilities fallback", () => {
     expect(client.listConfigurations).not.toHaveBeenCalled();
     expect(client.listEntityFaults).not.toHaveBeenCalled();
   });
+
+  it("shows standard tabs (no crash) when capabilities is undefined", async () => {
+    // A gateway whose GET / omits the capabilities field yields undefined here.
+    // The tab bar must fall back to standard tabs, not throw on undefined access.
+    const client = makeClient();
+    renderTabBar({ client, capabilities: undefined as unknown as RootCapabilities | null, entityId: "e1" });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole("tab", { name: /^data/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^logs/i })).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -367,20 +376,22 @@ describe("EntityBrowserTabBar - logs tab", () => {
 // Tests: loading skeleton
 // ---------------------------------------------------------------------------
 
-describe("EntityBrowserTabBar - loading skeleton", () => {
-  it("shows loading state while prefetch is in flight", async () => {
-    let resolveOps!: () => void;
-    const pending = new Promise<void>((r) => { resolveOps = r; });
+describe("EntityBrowserTabBar - tabs render before counts resolve", () => {
+  it("shows capability tabs immediately while the count fetch is still in flight", async () => {
+    // The count fetch only feeds the badges, so the tabs must be visible right
+    // away (no blocking skeleton) even before listOperations resolves.
+    let resolveOps!: (ops: never[]) => void;
+    const pending = new Promise<never[]>((r) => { resolveOps = r; });
     const client = makeClient({
-      listOperations: vi.fn().mockReturnValue(pending.then(() => [])),
+      listOperations: vi.fn().mockReturnValue(pending),
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
-    // Before prefetch resolves, skeleton/loading indicator must be visible
-    expect(screen.getByRole("status", { name: /prefetching/i })).toBeInTheDocument();
-    resolveOps();
-    await waitFor(() => {
-      expect(screen.queryByRole("status", { name: /prefetching/i })).not.toBeInTheDocument();
-    });
+    // Tabs are present immediately, before the count promise settles.
+    expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^logs/i })).toBeInTheDocument();
+    resolveOps([]);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
   });
 });
 
@@ -407,7 +418,7 @@ describe("EntityBrowserTabBar - parallel prefetch", () => {
     expect(listEntityFaults).toHaveBeenCalledWith("apps", "e1");
   });
 
-  it("shows remaining tabs when one prefetch fails (per-count error tolerance)", async () => {
+  it("keeps every capability tab visible even when one count fetch fails", async () => {
     const client = makeClient({
       listOperations: vi.fn().mockRejectedValue(new Error("Network error")),
       listConfigurations: vi.fn().mockResolvedValue({
@@ -418,11 +429,12 @@ describe("EntityBrowserTabBar - parallel prefetch", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      // configurations visible (count=1), operations hidden (error treated as 0).
       expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
-    // faults is not count-gated, so it stays visible regardless of the count.
+    // A failed count fetch only drops the badge, never the tab.
+    const opsTab = screen.getByRole("tab", { name: /^operations/i });
+    expect(opsTab).toBeInTheDocument();
+    expect(within(opsTab).queryByText("0")).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
   });
 });
@@ -476,8 +488,11 @@ describe("EntityBrowserTabBar - stale guard", () => {
     });
     await act(async () => { await Promise.resolve(); });
 
-    // Operations tab should NOT show (stale result discarded, second entity has 0 ops)
-    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
+    // Operations tab shows (capability-only). The stale e1 count (1) must not
+    // leak into the badge - e2 has 0 ops, so no count badge.
+    const opsTab = screen.getByRole("tab", { name: /^operations/i });
+    expect(opsTab).toBeInTheDocument();
+    expect(within(opsTab).queryByText("1")).not.toBeInTheDocument();
   });
 });
 
@@ -511,12 +526,15 @@ describe("EntityBrowserTabBar - no setState after unmount", () => {
     // Call count is frozen: the resolved stale promise triggered no re-fetch.
     expect(listOperations).toHaveBeenCalledTimes(1);
 
-    // A fresh sibling for a different entity with 0 ops must not inherit the
-    // stale operations count from the unmounted component.
+    // A fresh sibling for a different entity with 0 ops shows the operations tab
+    // (capability-only) but must not inherit the unmounted component's stale
+    // count as a badge.
     const siblingClient = makeClient({ listOperations: vi.fn().mockResolvedValue([]) });
     renderTabBar({ client: siblingClient, capabilities: ALL_CAPS, entityId: "e2" });
     await waitFor(() => expect(siblingClient.listOperations).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
+    const opsTab = screen.getByRole("tab", { name: /^operations/i });
+    expect(opsTab).toBeInTheDocument();
+    expect(within(opsTab).queryByText("1")).not.toBeInTheDocument();
   });
 });
