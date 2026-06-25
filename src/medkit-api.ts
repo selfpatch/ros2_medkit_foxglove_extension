@@ -99,6 +99,25 @@ function narrowExecutionStatus(raw: string): GatewayExecutionStatus {
     : "pending";
 }
 
+const LOG_SEVERITIES: ReadonlySet<string> = new Set([
+  "debug",
+  "info",
+  "warning",
+  "error",
+  "fatal",
+]);
+
+/**
+ * Normalize a gateway log severity string to a known LogSeverity. The gateway
+ * emits lowercase SOVD names (e.g. "warning"); this lowercases defensively and
+ * falls back to "info" for any unexpected value so the panel never renders or
+ * filters on an out-of-union severity.
+ */
+function normalizeLogSeverity(raw: string | undefined): LogEntry["severity"] {
+  const lower = (raw ?? "").toLowerCase();
+  return (LOG_SEVERITIES.has(lower) ? lower : "info") as LogEntry["severity"];
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -595,7 +614,7 @@ export class MedkitApiClient {
       return {
         id: entry.id,
         timestamp: entry.timestamp,
-        severity: (entry.severity?.toLowerCase() ?? "info") as LogEntry["severity"],
+        severity: normalizeLogSeverity(entry.severity),
         message: entry.message,
         context: entry.context ?? { node: "unknown" },
       };
