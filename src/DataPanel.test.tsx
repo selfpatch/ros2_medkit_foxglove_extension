@@ -61,6 +61,12 @@ describe("DataPanel - publish affordance", () => {
     expect(screen.queryByRole("button", { name: "Publish to /no_type" })).not.toBeInTheDocument();
   });
 
+  it("offers Publish for a topic whose direction the gateway does not report", () => {
+    // Neither isPublisher nor isSubscriber set: don't over-restrict, allow Publish.
+    renderPanel(makeClient(), [{ topic: "/x", timestamp: 0, data: null, type: "std_msgs/msg/String" }]);
+    expect(screen.getByRole("button", { name: "Publish to /x" })).toBeInTheDocument();
+  });
+
   it("publishes the JSON message to the topic with its type, after confirmation", async () => {
     const publishTopic = vi.fn().mockResolvedValue(undefined);
     renderPanel(makeClient(publishTopic), [SUB_TOPIC]);
@@ -114,6 +120,28 @@ describe("DataPanel - publish affordance", () => {
     // The schema field is rendered (not a raw JSON textarea).
     expect(screen.getByLabelText("linear_x")).toBeInTheDocument();
     expect(screen.queryByLabelText("message JSON for /twist")).not.toBeInTheDocument();
+  });
+
+  it("publishes the structured value from the schema form (after confirmation)", async () => {
+    const publishTopic = vi.fn().mockResolvedValue(undefined);
+    const schemaTopic: ComponentTopic = {
+      topic: "/twist",
+      timestamp: 0,
+      data: null,
+      type: "geometry_msgs/msg/Twist",
+      isSubscriber: true,
+      schema: { linear_x: { type: "float64" } },
+    };
+    renderPanel(makeClient(publishTopic), [schemaTopic]);
+    fireEvent.click(screen.getByRole("button", { name: "Publish to /twist" }));
+    fireEvent.change(screen.getByLabelText("linear_x"), { target: { value: "1.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send /twist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm publish to /twist" }));
+    await waitFor(() =>
+      expect(publishTopic).toHaveBeenCalledWith("apps", "talker", "/twist", "geometry_msgs/msg/Twist", {
+        linear_x: 1.5,
+      }),
+    );
   });
 });
 

@@ -18,7 +18,7 @@ import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
-import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { useColorSchemeTheme, useGatewayConnectionSettings, useSharedConnection } from "./panel-hooks";
 import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { ConfigurationsPanel } from "./ConfigurationsPanel";
@@ -304,29 +304,7 @@ function EntityBrowserPanel({
     context.saveState(state);
   }, [context, state]);
 
-  useEffect(() => {
-    context.updatePanelSettingsEditor({
-      actionHandler: (action) => {
-        if (action.action !== "update") return;
-        const [section, key] = action.payload.path;
-        if (section !== "conn") return;
-        const next = { ...state };
-        if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
-        else if (key === "basePath") next.basePath = action.payload.value as string;
-        else return;
-        updateConnection(next);
-      },
-      nodes: {
-        conn: {
-          label: "Gateway Connection",
-          fields: {
-            gatewayUrl: { label: "Server URL", input: "string", value: state.gatewayUrl },
-            basePath: { label: "Base path", input: "string", value: state.basePath },
-          },
-        },
-      },
-    });
-  }, [context, state, updateConnection]);
+  useGatewayConnectionSettings(context, state, updateConnection);
 
   // ── Connect ─────────────────────────────────────────────────────
 
