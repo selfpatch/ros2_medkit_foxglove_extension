@@ -16,8 +16,10 @@ The Entity Browser panel now includes a Logs tab for each entity:
 - Optional auto-refresh (5 s interval) that pauses automatically while the panel
   is not visible (Page Visibility API) and resumes with an immediate fetch.
 - Manual Refresh button always available regardless of auto-refresh state.
-- Display cap of 200 rows with a "Show all (N)" button when more entries are
-  returned.
+- Entries are shown newest-first; a display cap of 200 rows keeps the most
+  recent entries with a "Show all (N)" button when more are returned.
+- Log configuration editor (severity filter and max-entries cap, 1..10000) via
+  the settings control.
 - Clear "no LogManager configured" state for HTTP 503/404 responses.
 - Note: log trigger endpoints are not included in this release (deferred).
 

@@ -365,6 +365,26 @@ describe("LogsPanel - display cap and show all", () => {
     });
     expect(screen.queryByText(/Showing 200/)).not.toBeInTheDocument();
   });
+
+  it("shows newest entries first and the cap keeps the newest, not the oldest", async () => {
+    // The gateway returns oldest-first; "msg-0" is oldest, "msg-249" is newest.
+    const entries = Array.from({ length: 250 }, (_, i) =>
+      makeEntry({ id: `log-ord-${i}`, message: `msg-${i}` }),
+    );
+    const client = makeClient({
+      listEntityLogs: vi.fn().mockResolvedValue({ items: entries }),
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByText("msg-249")).toBeInTheDocument();
+    });
+    // The newest entry is shown and the oldest is capped out (behind Show all).
+    expect(screen.getByText("msg-249")).toBeInTheDocument(); // newest visible
+    expect(screen.getByText("msg-50")).toBeInTheDocument(); // 250-200 boundary still visible
+    expect(screen.queryByText("msg-0")).not.toBeInTheDocument(); // oldest capped out
+    expect(screen.queryByText("msg-49")).not.toBeInTheDocument(); // oldest 50 capped out
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -678,7 +698,9 @@ describe("LogsPanel - config panel", () => {
     });
   });
 
-  it("max_entries null (unlimited) is preserved and sent as null on save", async () => {
+  it("falls back to 100 when the gateway returns a null max_entries (no unlimited)", async () => {
+    // The gateway cap is non-nullable; if a null somehow arrives, the panel must
+    // show a concrete number rather than an empty "unlimited" field.
     const updateLogsConfiguration = vi.fn().mockResolvedValue(undefined);
     const getLogsConfiguration = vi.fn().mockResolvedValue({ max_entries: null, severity_filter: "debug" });
     const client = makeClient({ getLogsConfiguration, updateLogsConfiguration });
@@ -688,20 +710,36 @@ describe("LogsPanel - config panel", () => {
     openConfig();
     await waitFor(() => expect(screen.getByLabelText(/max entries/i)).toBeInTheDocument());
 
-    // Input should be empty (null = unlimited)
     const maxEntriesInput = screen.getByLabelText(/max entries/i);
-    expect(maxEntriesInput).toHaveValue(null);
-    // "unlimited" hint should be visible
-    expect(screen.getByText(/unlimited/i)).toBeInTheDocument();
+    expect(maxEntriesInput).toHaveValue(100);
+    expect(screen.queryByText(/unlimited/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
       expect(updateLogsConfiguration).toHaveBeenCalledWith("apps", "motor", {
         severity_filter: "debug",
-        max_entries: null,
+        max_entries: 100,
       });
     });
+  });
+
+  it("rejects an out-of-range max_entries and does not save", async () => {
+    const updateLogsConfiguration = vi.fn().mockResolvedValue(undefined);
+    const getLogsConfiguration = vi.fn().mockResolvedValue({ max_entries: 100, severity_filter: "debug" });
+    const client = makeClient({ getLogsConfiguration, updateLogsConfiguration });
+    renderPanel(client);
+    await waitFor(() => expect(screen.queryByRole("status", { name: /loading/i })).not.toBeInTheDocument());
+
+    openConfig();
+    await waitFor(() => expect(screen.getByLabelText(/max entries/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/max entries/i), { target: { value: "0" } });
+    expect(screen.getByText(/must be 1\.\.10000/i)).toBeInTheDocument();
+    expect((screen.getByRole("button", { name: /^save$/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    expect(updateLogsConfiguration).not.toHaveBeenCalled();
   });
 
   it("shows config error state when getLogsConfiguration fails", async () => {
