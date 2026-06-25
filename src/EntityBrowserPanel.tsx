@@ -57,16 +57,14 @@ const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", 
 
 // ---------------------------------------------------------------------------
 // Capability -> tab mapping
-//   data_access     -> "data"         (shown when the data_access capability is
-//                                       enabled; no count prefetch)
-//   operations      -> "operations"   (shown when cap enabled AND count > 0)
-//   configurations  -> "configurations" (shown when cap enabled AND count > 0)
-//   faults          -> "faults"       (shown when cap enabled; no count gate -
-//                                       faults arrive live, and the prefetch only
-//                                       reruns on entity/caps change, so a count
-//                                       gate would hide the tab exactly when a new
-//                                       fault lands on the selected entity)
-//   logs            -> "logs"         (shown when cap enabled; no count check)
+//
+// Tab VISIBILITY is driven by the gateway capability alone - a tab is shown
+// whenever the server reports the capability, and the tab's own panel shows an
+// empty state when the selected entity has no items. Visibility is NOT gated on
+// a resource count: counts are taken once on selection, so gating would make
+// tabs vanish on entities that happen to have zero items (and hide a tab the
+// moment a fault/config first appears). Counts are still fetched, but only to
+// populate the informational count badges.
 // ---------------------------------------------------------------------------
 
 interface ResourceCounts {
@@ -75,14 +73,15 @@ interface ResourceCounts {
   faults: number;
 }
 
-function deriveVisibleTabs(capabilities: RootCapabilities | null, counts: ResourceCounts | null): Tab[] {
-  if (capabilities === null) return STANDARD_TABS;
+function deriveVisibleTabs(capabilities: RootCapabilities | null | undefined): Tab[] {
+  // Missing / non-object capabilities (fallback mode, or a gateway whose GET /
+  // omits the field) -> show the standard tabs rather than crashing or blanking.
+  // A present capabilities object is trusted as-is, even if every flag is false.
+  if (capabilities == null || typeof capabilities !== "object") return STANDARD_TABS;
   const tabs: Tab[] = [];
   if (capabilities.data_access) tabs.push("data");
-  if (capabilities.operations && counts !== null && counts.operations > 0) tabs.push("operations");
-  if (capabilities.configurations && counts !== null && counts.configurations > 0) tabs.push("configurations");
-  // Faults are not count-gated: a fault can arrive after the count prefetch ran,
-  // so gating would hide the tab the moment it is most needed (like logs).
+  if (capabilities.operations) tabs.push("operations");
+  if (capabilities.configurations) tabs.push("configurations");
   if (capabilities.faults) tabs.push("faults");
   if (capabilities.logs) tabs.push("logs");
   return tabs;
@@ -115,9 +114,10 @@ export function EntityBrowserTabBar({
 }: EntityBrowserTabBarProps): ReactElement {
   const c = S.colors(theme);
 
-  // null = still prefetching; set after Promise.all resolves or caps is null
+  // Counts populate the informational tab badges only; null = not fetched yet.
+  // They never gate tab visibility (that is capability-only), so a slow or
+  // failed count fetch can't hide a tab.
   const [counts, setCounts] = useState<ResourceCounts | null>(null);
-  const [prefetching, setPrefetching] = useState(false);
   // Which tab currently has keyboard focus, for a visible focus ring (WCAG
   // 2.4.7) - inline styles cannot express :focus-visible.
   const [focusedTab, setFocusedTab] = useState<Tab | null>(null);
@@ -133,29 +133,17 @@ export function EntityBrowserTabBar({
     };
   }, []);
 
+  // Fetch resource counts for the badges. This is non-blocking: the tabs render
+  // immediately from capabilities; the badges fill in when this resolves.
   useEffect(() => {
     entityRef.current = entityId;
-
-    // No client or no capabilities -> fallback mode, no prefetch
-    if (!client || capabilities === null) {
-      setCounts(null);
-      setPrefetching(false);
-      return;
-    }
-
-    // Reset counts for new entity
     setCounts(null);
-    setPrefetching(true);
+
+    if (!client || capabilities == null) return;
+
     const currentEntityId = entityId;
-    // Per-run cancel flag: a fast entity switch (or unmount) flips this so the
-    // resolved prefetch from THIS run discards all of its setState. The current
-    // run is the only one allowed to clear `prefetching`.
     let cancelled = false;
 
-    // These pull the full collections only to take `.length` for the tab counts.
-    // The SOVD API exposes no count/HEAD for these resources, so a full fetch is
-    // the only option; it doubles as the data the tabs need once selected. Kept
-    // deliberately rather than adding a bespoke count round-trip.
     const fetchOps = capabilities.operations
       ? client.listOperations(entityType, entityId).then((ops) => ops.length).catch(() => 0)
       : Promise.resolve(0);
@@ -172,7 +160,6 @@ export function EntityBrowserTabBar({
       if (cancelled || !mountedRef.current) return;
       if (entityRef.current !== currentEntityId) return;
       setCounts({ operations: ops, configurations: configs, faults });
-      setPrefetching(false);
     });
 
     return () => {
@@ -180,15 +167,12 @@ export function EntityBrowserTabBar({
     };
   }, [client, capabilities, entityId, entityType]);
 
-  // Memoize so the array identity is stable across renders (its only real
-  // inputs are capabilities + counts); otherwise the fallback effect below
-  // would re-fire every render and churn onTabChange.
-  const visibleTabs = useMemo(
-    () => deriveVisibleTabs(capabilities, counts),
-    [capabilities, counts],
-  );
+  // Visibility is capability-only, so the tab set is stable across renders for a
+  // given capability set (counts no longer affect it).
+  const visibleTabs = useMemo(() => deriveVisibleTabs(capabilities), [capabilities]);
 
-  // If the current active tab became hidden (prefetch finished, count=0), fall back to first visible
+  // If the active tab isn't in the visible set (e.g. the gateway doesn't expose
+  // it), fall back to the first visible tab.
   const resolvedActive: Tab =
     visibleTabs.includes(activeTab)
       ? activeTab
@@ -202,29 +186,6 @@ export function EntityBrowserTabBar({
       onTabChangeRef.current(resolvedActive);
     }
   }, [resolvedActive, activeTab, visibleTabs]);
-
-  if (prefetching) {
-    return (
-      <div
-        role="status"
-        aria-label="prefetching resource counts"
-        style={{ display: "flex", gap: 4, marginBottom: 8 }}
-      >
-        {STANDARD_TABS.map((t) => (
-          <div
-            key={t}
-            style={{
-              height: 28,
-              width: 80,
-              borderRadius: 4,
-              background: c.bgAlt,
-              opacity: 0.5,
-            }}
-          />
-        ))}
-      </div>
-    );
-  }
 
   return (
     <div role="tablist" style={{ display: "flex", gap: 2, marginBottom: 8 }}>
