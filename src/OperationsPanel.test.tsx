@@ -77,6 +77,10 @@ function makeClient(
   return {
     listOperations: vi.fn().mockResolvedValue(ops),
     createExecution: vi.fn().mockResolvedValue(execResponse),
+    // Default stubs so an action run's polling loop (getExecution after ~1s) and
+    // a cancel never hit an undefined method under real timers.
+    getExecution: vi.fn().mockResolvedValue({ status: "running" }),
+    cancelExecution: vi.fn().mockResolvedValue(undefined),
   } as unknown as MedkitApiClient;
 }
 

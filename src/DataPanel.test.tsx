@@ -13,8 +13,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeClient(publishTopic = vi.fn().mockResolvedValue(undefined)): MedkitApiClient {
-  return { publishTopic } as unknown as MedkitApiClient;
+function makeClient(
+  publishTopic = vi.fn().mockResolvedValue(undefined),
+  getTopicData = vi.fn().mockResolvedValue({ topic: "/chatter", data: { data: "hi" } }),
+): MedkitApiClient {
+  return { publishTopic, getTopicData } as unknown as MedkitApiClient;
 }
 
 function renderPanel(client: MedkitApiClient, topics: ComponentTopic[]) {
@@ -89,5 +92,25 @@ describe("DataPanel - publish affordance", () => {
     // The schema field is rendered (not a raw JSON textarea).
     expect(screen.getByLabelText("linear_x")).toBeInTheDocument();
     expect(screen.queryByLabelText("message JSON for /cmd")).not.toBeInTheDocument();
+  });
+});
+
+describe("DataPanel - read", () => {
+  it("offers Read for every topic and shows the fetched value", async () => {
+    const getTopicData = vi.fn().mockResolvedValue({ topic: "/chatter", data: { data: "hello world" } });
+    const client = makeClient(vi.fn(), getTopicData);
+    renderPanel(client, [PLAIN_TOPIC]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Read /chatter" }));
+    await waitFor(() => expect(getTopicData).toHaveBeenCalledWith("apps", "talker", "/chatter"));
+    await waitFor(() => expect(screen.getByText(/hello world/)).toBeInTheDocument());
+  });
+
+  it("shows a read error when the fetch fails", async () => {
+    const getTopicData = vi.fn().mockRejectedValue(new Error("no sample"));
+    const client = makeClient(vi.fn(), getTopicData);
+    renderPanel(client, [PLAIN_TOPIC]);
+    fireEvent.click(screen.getByRole("button", { name: "Read /chatter" }));
+    expect(await screen.findByText(/no sample/)).toBeInTheDocument();
   });
 });

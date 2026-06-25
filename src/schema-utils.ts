@@ -253,13 +253,20 @@ export function getSchemaDefaults(schema: TopicSchema): Record<string, unknown> 
  * Used to overlay user-provided values onto schema defaults.
  * Mirrors web_ui deepMerge (schema-utils.ts:196-221).
  */
+// Keys that must never be merged from (possibly user-supplied) source objects -
+// assigning to them pollutes Object.prototype.
+const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export function deepMerge(
     target: Record<string, unknown>,
     source: Record<string, unknown>,
 ): Record<string, unknown> {
     const result: Record<string, unknown> = { ...target };
 
-    for (const key in source) {
+    // Iterate own keys only and skip prototype-pollution vectors, since `source`
+    // can come from user-edited JSON (the JSON-fallback form field).
+    for (const key of Object.keys(source)) {
+        if (FORBIDDEN_MERGE_KEYS.has(key)) continue;
         const sourceValue = source[key];
         const targetValue = result[key];
 
