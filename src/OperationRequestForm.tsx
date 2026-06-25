@@ -5,9 +5,9 @@
 // SchemaFormField (ros2_medkit_web_ui/src/components/SchemaFormField.tsx)
 // but uses inline styles from src/styles.ts instead of shadcn/Tailwind.
 
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 
-import { getDefaultValue, isBooleanType, isNumericType, isPrimitiveType } from "./schema-utils";
+import { getDefaultValue, isBigIntType, isBooleanType, isNumericType, isPrimitiveType } from "./schema-utils";
 import type { SchemaFieldType, TopicSchema } from "./schema-utils";
 import * as S from "./styles";
 import type { Theme } from "./styles";
@@ -34,12 +34,15 @@ interface NumericFieldProps {
     id: string;
     schemaType: string;
     value: unknown;
-    onChange: (value: number) => void;
+    // Emits a number for normal numerics, or a decimal string for int64/uint64
+    // (those are carried as strings to preserve precision beyond 2^53).
+    onChange: (value: number | string) => void;
     theme: Theme;
 }
 
 function NumericField({ id, schemaType, value, onChange, theme }: NumericFieldProps): JSX.Element {
     const lower = schemaType.toLowerCase();
+    const isBig = isBigIntType(lower);
     const isInteger = INTEGER_TYPES.includes(lower);
     const isUnsigned = lower.startsWith("uint") || lower === "byte";
 
@@ -81,6 +84,16 @@ function NumericField({ id, schemaType, value, onChange, theme }: NumericFieldPr
                     return;
                 }
 
+                // int64/uint64: emit the validated decimal STRING (no parseInt)
+                // so values beyond 2^53 are not rounded; the gateway parses the
+                // string to int64/uint64 losslessly.
+                if (isBig) {
+                    if (!/^-?\d+$/.test(newRaw)) return; // integer digits only
+                    if (isUnsigned && newRaw.startsWith("-")) return;
+                    onChange(newRaw);
+                    return;
+                }
+
                 // Mirrors web_ui lines 69-72: parse, skip NaN, clamp unsigned.
                 let val = isInteger ? parseInt(newRaw, 10) : parseFloat(newRaw);
                 if (isNaN(val)) return;
@@ -88,6 +101,18 @@ function NumericField({ id, schemaType, value, onChange, theme }: NumericFieldPr
                 onChange(val);
             }}
             onBlur={() => {
+                // int64/uint64: commit the decimal string, normalising
+                // intermediates / invalid input to "0".
+                if (isBig) {
+                    let s = rawInput;
+                    if (!/^-?\d+$/.test(s) || (isUnsigned && s.startsWith("-"))) {
+                        s = "0";
+                    }
+                    setRawInput(s);
+                    onChange(s);
+                    return;
+                }
+
                 // Mirrors web_ui lines 75-86: commit on blur, normalise intermediates.
                 let val: number;
                 if (rawInput === "" || rawInput === "-" || rawInput === ".") {
@@ -196,14 +221,32 @@ function SchemaField({
     const c = S.colors(theme);
     const fieldId = idPrefix ? `${idPrefix}.${name}` : name;
     const [expanded, setExpanded] = useState(true);
+    // Stable per-array-item keys. Index keys would let React reuse a child field
+    // instance (and its local typing buffer) across logical items when one is
+    // removed/reordered mid-edit, stranding a stale value on the wrong row. We
+    // mint a unique id per item and remove/append it in lockstep with the array
+    // mutations below; the render reconcile covers external value changes.
+    const itemKeys = useRef<{ ids: number[]; next: number }>({ ids: [], next: 0 });
 
     // ----- Array type (mirrors web_ui lines 102-168) -----
     if (schema.type === "array" && schema.items) {
         const arrayValue = Array.isArray(value) ? value : [];
         const itemSchema = schema.items;
 
-        const addItem = () => onChange([...arrayValue, getDefaultValue(itemSchema)]);
-        const removeItem = (idx: number) => onChange(arrayValue.filter((_, i) => i !== idx));
+        // Reconcile keys to the current length (initial render + external value
+        // changes that did not go through the handlers below).
+        const keys = itemKeys.current;
+        while (keys.ids.length < arrayValue.length) keys.ids.push(keys.next++);
+        if (keys.ids.length > arrayValue.length) keys.ids.length = arrayValue.length;
+
+        const addItem = () => {
+            keys.ids.push(keys.next++);
+            onChange([...arrayValue, getDefaultValue(itemSchema)]);
+        };
+        const removeItem = (idx: number) => {
+            keys.ids.splice(idx, 1);
+            onChange(arrayValue.filter((_, i) => i !== idx));
+        };
         const updateItem = (idx: number, v: unknown) => {
             const next = [...arrayValue];
             next[idx] = v;
@@ -258,7 +301,7 @@ function SchemaField({
                     >
                         {arrayValue.map((item, idx) => (
                             <div
-                                key={`${fieldId}[${idx}]`}
+                                key={keys.ids[idx]}
                                 style={{ display: "flex", alignItems: "flex-start", gap: 4, marginBottom: 4 }}
                             >
                                 <div style={{ flex: 1 }}>
@@ -398,7 +441,7 @@ function SchemaField({
                         id={fieldId}
                         schemaType={schema.type}
                         value={value}
-                        onChange={onChange as (v: number) => void}
+                        onChange={onChange}
                         theme={theme}
                     />
                 </FieldRow>
@@ -424,22 +467,67 @@ function SchemaField({
     // ----- Fallback: unknown / complex type as JSON (mirrors web_ui lines 252-273) -----
     return (
         <FieldRow fieldId={fieldId} label={name} depth={depth} theme={theme} typeHint={schema.type}>
-            <input
-                id={fieldId}
-                type="text"
-                value={JSON.stringify(value ?? null)}
-                placeholder="JSON value"
-                aria-label={name}
-                style={{ ...S.input(theme), flex: 1, fontFamily: "ui-monospace, monospace" }}
-                onChange={(e) => {
-                    try {
-                        onChange(JSON.parse(e.target.value));
-                    } catch {
-                        onChange(e.target.value);
-                    }
-                }}
-            />
+            <JsonField id={fieldId} name={name} value={value} onChange={onChange} theme={theme} />
         </FieldRow>
+    );
+}
+
+// =============================================================================
+// JsonField - fallback editor for unknown/complex types, edited as raw JSON.
+// Keeps a local raw text buffer (like NumericField) so mid-edit input is shown
+// verbatim instead of being re-quoted by JSON.stringify on every keystroke; the
+// parent value is updated only when the buffer parses as valid JSON.
+// =============================================================================
+
+function JsonField({
+    id,
+    name,
+    value,
+    onChange,
+    theme,
+}: {
+    id: string;
+    name: string;
+    value: unknown;
+    onChange: (value: unknown) => void;
+    theme: Theme;
+}): JSX.Element {
+    const [raw, setRaw] = useState<string>(() => JSON.stringify(value ?? null));
+
+    // Resync from an external value change, but never clobber a mid-edit buffer
+    // that is currently invalid JSON (the user is still typing).
+    useEffect(() => {
+        const expected = JSON.stringify(value ?? null);
+        try {
+            if (JSON.stringify(JSON.parse(raw) ?? null) !== expected) {
+                setRaw(expected);
+            }
+        } catch {
+            // raw is mid-edit invalid - leave it so typing is not interrupted.
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value]);
+
+    return (
+        <input
+            id={id}
+            type="text"
+            value={raw}
+            placeholder="JSON value"
+            aria-label={name}
+            style={{ ...S.input(theme), flex: 1, fontFamily: "ui-monospace, monospace" }}
+            onChange={(e) => {
+                const next = e.target.value;
+                setRaw(next);
+                // Only propagate a valid parse; an invalid mid-edit string stays
+                // local so the parent keeps the last good value.
+                try {
+                    onChange(JSON.parse(next));
+                } catch {
+                    /* invalid JSON in progress - do not propagate */
+                }
+            }}
+        />
     );
 }
 

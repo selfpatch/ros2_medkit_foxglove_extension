@@ -17,6 +17,9 @@ operation support:
 - Cancel running actions via DELETE.
 - Per-operation execution history (last 10 runs) with timestamp and terminal
   status.
+- `int64`/`uint64` form fields are carried as decimal strings end-to-end (the
+  gateway parses them back losslessly) so values beyond 2^53 are not rounded by
+  a JS number. This diverges from `ros2_medkit_web_ui`, which uses plain numbers.
 
 ### Migrate HTTP layer to generated typed client
 

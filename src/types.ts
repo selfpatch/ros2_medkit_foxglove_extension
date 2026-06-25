@@ -97,13 +97,12 @@ export interface CreateExecutionRequest {
 }
 
 /**
- * Status of a create-execution response. The synchronous (200) branch returns a
- * terminal `completed`/`failed`; the asynchronous (202) branch returns `accepted`
- * (the SOVD async alias, treated like `pending`). `pending`/`running` may also
- * appear for an action that has already started by the time the response lands.
+ * Status of a create-execution response. A synchronous service (200) returns
+ * only `{parameters}` with no status field. An asynchronous action (202)
+ * returns `{id, status:"running"}` - the gateway emits "running" even for a
+ * freshly accepted goal and never emits the SOVD "accepted" alias.
  */
 export type CreateExecutionStatus =
-  | "accepted"
   | "pending"
   | "running"
   | "completed"
@@ -111,8 +110,11 @@ export type CreateExecutionStatus =
 
 export interface CreateExecutionResponse {
   id?: string;
-  status: CreateExecutionStatus;
-  kind: OperationKind;
+  // Optional: a synchronous service response carries neither status nor kind -
+  // only `parameters`. Present for an async action (202), which returns
+  // status:"running".
+  status?: CreateExecutionStatus;
+  kind?: OperationKind;
   result?: unknown;
   parameters?: unknown;
   error?: string;
