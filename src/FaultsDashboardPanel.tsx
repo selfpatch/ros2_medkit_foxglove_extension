@@ -18,7 +18,7 @@ import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
-import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { useColorSchemeTheme, useGatewayConnectionSettings, useSharedConnection } from "./panel-hooks";
 import type { Fault, FaultSeverity, FaultResponse, Snapshot, SovdResourceEntityType } from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
@@ -95,53 +95,31 @@ function FaultsDashboardPanel({
     context.saveState(knobs);
   }, [context, knobs]);
 
-  useEffect(() => {
-    context.updatePanelSettingsEditor({
-      actionHandler: (action) => {
-        if (action.action !== "update") return;
-        const [section, key] = action.payload.path;
-        if (section !== "conn") return;
-        if (key === "gatewayUrl" || key === "basePath") {
-          updateConnection({
-            gatewayUrl: key === "gatewayUrl" ? (action.payload.value as string) : conn.gatewayUrl,
-            basePath: key === "basePath" ? (action.payload.value as string) : conn.basePath,
-          });
-          return;
-        }
-        if (key === "refreshInterval") {
-          setKnobs((p) => ({ ...p, refreshIntervalSec: Number(action.payload.value) }));
-        }
-        if (key === "enableStream") {
-          setKnobs((p) => ({ ...p, enableStream: action.payload.value === "true" }));
-        }
+  useGatewayConnectionSettings(context, conn, updateConnection, {
+    label: "Configuration",
+    extraFields: {
+      refreshInterval: {
+        label: "Poll interval (s)",
+        input: "select",
+        value: String(state.refreshIntervalSec),
+        options: [
+          { label: "1s", value: "1" },
+          { label: "5s", value: "5" },
+          { label: "10s", value: "10" },
+          { label: "30s", value: "30" },
+        ],
       },
-      nodes: {
-        conn: {
-          label: "Configuration",
-          fields: {
-            gatewayUrl: { label: "Server URL", input: "string", value: state.gatewayUrl },
-            basePath: { label: "Base path", input: "string", value: state.basePath },
-            refreshInterval: {
-              label: "Poll interval (s)",
-              input: "select",
-              value: String(state.refreshIntervalSec),
-              options: [
-                { label: "1s", value: "1" },
-                { label: "5s", value: "5" },
-                { label: "10s", value: "10" },
-                { label: "30s", value: "30" },
-              ],
-            },
-            enableStream: {
-              label: "SSE live stream",
-              input: "boolean",
-              value: state.enableStream,
-            },
-          },
-        },
+      enableStream: {
+        label: "SSE live stream",
+        input: "boolean",
+        value: state.enableStream,
       },
-    });
-  }, [context, state]);
+    },
+    onExtraAction: (key, value) => {
+      if (key === "refreshInterval") setKnobs((p) => ({ ...p, refreshIntervalSec: Number(value) }));
+      else if (key === "enableStream") setKnobs((p) => ({ ...p, enableStream: value === "true" }));
+    },
+  });
 
   // ── Connection & data ───────────────────────────────────────────
 

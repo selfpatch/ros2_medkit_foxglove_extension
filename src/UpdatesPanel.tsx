@@ -6,7 +6,6 @@
 
 import type { PanelExtensionContext } from "@foxglove/extension";
 import {
-    type CSSProperties,
     type ReactElement,
     useCallback,
     useEffect,
@@ -26,10 +25,18 @@ import {
     triggerExecute,
     triggerAutomated,
     deleteUpdate,
-    type UpdateStatus,
 } from "./updates-api";
 import { type GatewayConnection, joinConnection } from "./shared-connection";
-import { useColorSchemeTheme, useDialogA11y, useSharedConnection } from "./panel-hooks";
+import {
+    useColorSchemeTheme,
+    useDialogA11y,
+    useGatewayConnectionSettings,
+    useSharedConnection,
+} from "./panel-hooks";
+import { Modal } from "./Modal";
+import { UpdateRow, type UpdateEntry } from "./UpdateRow";
+import { RegisterDialog } from "./RegisterDialog";
+import { DetailsDialog } from "./DetailsDialog";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -95,73 +102,6 @@ function validateUpdatePackage(meta: unknown): string | undefined {
     return undefined;
 }
 
-interface UpdateEntry {
-    id: string;
-    status: UpdateStatus | null;
-    // Set when the per-id /status fetch failed for a reason other than the
-    // benign "no status yet" 404, so a real error is not shown as "Ready".
-    error?: string;
-}
-
-function statusColor(status: string | undefined, theme: Theme): string {
-    const c = S.colors(theme);
-    switch (status) {
-        case "pending":
-        case "inProgress":
-            return c.accent;
-        case "completed":
-            return c.success;
-        case "failed":
-            return c.critical;
-        default:
-            return c.textMuted;
-    }
-}
-
-// Relative luminance (WCAG) of a #rgb or #rrggbb color.
-function luminance(hex: string): number {
-    let h = hex.trim().replace(/^#/, "");
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    if (!/^[0-9a-f]{6}$/i.test(h)) return 0;
-    const int = parseInt(h, 16);
-    const chan = [(int >> 16) & 255, (int >> 8) & 255, int & 255].map((v) => {
-        const s = v / 255;
-        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * chan[0] + 0.7152 * chan[1] + 0.0722 * chan[2];
-}
-
-// Pick black or white text for AA contrast against a status-badge color,
-// instead of hardcoding #fff (which fails AA on the green/blue/red badges).
-function readableTextOn(bg: string): string {
-    return luminance(bg) > 0.179 ? "#000000" : "#ffffff";
-}
-
-// Mid-flight: no actions. Otherwise every SOVD action stays on the table,
-// but prepare/execute/automated are disabled with a tooltip on terminal
-// states (completed/failed) where re-running is a no-op the gateway would
-// reject with a 409. Delete is always offered.
-function actionsForStatus(status: string | undefined): string[] {
-    if (status === "inProgress") return [];
-    return ["prepare", "execute", "automated", "delete"];
-}
-
-// Tooltip / disabled reason for an action given the current status, or
-// undefined when the action is applicable.
-function actionDisabledReason(action: string, status: string | undefined): string | undefined {
-    if (action === "delete") return undefined;
-    if (status === "completed") return "Update already completed - re-running would be rejected by the gateway";
-    if (status === "failed") return "Update has failed - re-running would be rejected by the gateway";
-    return undefined;
-}
-
-const ACTION_LABEL: Record<string, string> = {
-    prepare: "Prepare",
-    execute: "Execute",
-    automated: "Prepare & execute",
-    delete: "Delete",
-};
-
 // Destructive / state-mutating actions that require an explicit confirmation
 // dialog. Prepare only stages an artifact, so it is not confirmed.
 const CONFIRM_ACTIONS = new Set(["delete", "execute", "automated"]);
@@ -192,37 +132,6 @@ function describeUpdatesError(e: unknown): { message: string; notAvailable: bool
         return { message: "The gateway has no UpdateProvider configured (HTTP 501).", notAvailable: true };
     }
     return { message: e instanceof Error ? e.message : String(e), notAvailable: false };
-}
-
-// Responsive modal: backdrop fills the panel, card grows up to ~600px but
-// shrinks to 100% width on narrow Foxglove panels (no minWidth). Scrolls
-// internally if the content overflows.
-const modalBackdrop: CSSProperties = {
-    position: "absolute",
-    inset: 0,
-    background: "rgba(0,0,0,0.5)",
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    padding: 12,
-    zIndex: 100,
-    overflow: "auto",
-};
-
-function modalCard(theme: Theme): CSSProperties {
-    const c = S.colors(theme);
-    return {
-        background: c.bgCard,
-        color: c.text,
-        padding: 12,
-        borderRadius: 6,
-        border: `1px solid ${c.border}`,
-        width: "100%",
-        maxWidth: 600,
-        maxHeight: "100%",
-        overflow: "auto",
-        boxSizing: "border-box",
-    };
 }
 
 export interface UpdatesPanelViewProps {
@@ -568,316 +477,97 @@ export function UpdatesPanelView({
             )}
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                {sorted.map((entry) => {
-                    // A carried error (non-404 /status failure) shows a
-                    // distinct "Error" badge so it is not masked as healthy.
-                    // Otherwise the gateway returns 404 on /status until the
-                    // first operation runs, so "no status" maps to a
-                    // friendlier "Ready" badge (== ready to prepare/execute).
-                    const hasError = entry.error !== undefined;
-                    const statusLabel = hasError ? "Error" : entry.status?.status ?? "Ready";
-                    const sColor = hasError
-                        ? S.colors(theme).critical
-                        : statusColor(entry.status?.status, theme);
-                    const actions = actionsForStatus(entry.status?.status);
-                    const isBusy = busyIds.has(entry.id);
-                    return (
-                        <li key={entry.id} style={S.card(theme)}>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    flexWrap: "wrap",
-                                    justifyContent: "space-between",
-                                    alignItems: "center",
-                                    gap: 6,
-                                }}
-                            >
-                                <span
-                                    title={entry.id}
-                                    style={{
-                                        fontFamily: "ui-monospace, monospace",
-                                        fontSize: 12,
-                                        minWidth: 0,
-                                        overflow: "hidden",
-                                        textOverflow: "ellipsis",
-                                        whiteSpace: "nowrap",
-                                        flex: "1 1 auto",
-                                    }}
-                                >
-                                    {entry.id}
-                                </span>
-                                <span style={S.badge(readableTextOn(sColor), sColor)} title={entry.error}>
-                                    {statusLabel}
-                                </span>
-                            </div>
-                            {entry.status?.progress !== undefined && (
-                                <div
-                                    role="progressbar"
-                                    aria-label={`Progress for ${entry.id}`}
-                                    aria-valuenow={entry.status.progress}
-                                    aria-valuemin={0}
-                                    aria-valuemax={100}
-                                    aria-valuetext={`${Math.min(100, Math.max(0, entry.status.progress))}%`}
-                                    style={{
-                                        height: 4,
-                                        background: c.bgAlt,
-                                        borderRadius: 2,
-                                        marginTop: 6,
-                                        overflow: "hidden",
-                                    }}
-                                >
-                                    <div
-                                        style={{
-                                            width: `${Math.min(100, Math.max(0, entry.status.progress))}%`,
-                                            height: "100%",
-                                            background: sColor,
-                                        }}
-                                    />
-                                </div>
-                            )}
-                            <div
-                                style={{
-                                    display: "flex",
-                                    gap: 6,
-                                    marginTop: 8,
-                                    flexWrap: "wrap",
-                                }}
-                            >
-                                <button
-                                    style={S.btn(theme, "ghost")}
-                                    onClick={() => void openDetail(entry.id)}
-                                    disabled={isBusy}
-                                >
-                                    Details
-                                </button>
-                                {actions.map((action) => {
-                                    const reason = actionDisabledReason(action, entry.status?.status);
-                                    return (
-                                        <button
-                                            key={action}
-                                            style={S.btn(theme, action === "delete" ? "danger" : "primary")}
-                                            disabled={isBusy || reason !== undefined}
-                                            title={reason}
-                                            onClick={() =>
-                                                CONFIRM_ACTIONS.has(action)
-                                                    ? setConfirmAction({ id: entry.id, action })
-                                                    : void runAction(entry.id, action)
-                                            }
-                                        >
-                                            {ACTION_LABEL[action]}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </li>
-                    );
-                })}
+                {sorted.map((entry) => (
+                    <UpdateRow
+                        key={entry.id}
+                        entry={entry}
+                        theme={theme}
+                        busy={busyIds.has(entry.id)}
+                        onDetail={(id) => void openDetail(id)}
+                        onAction={(id, action) =>
+                            CONFIRM_ACTIONS.has(action)
+                                ? setConfirmAction({ id, action })
+                                : void runAction(id, action)
+                        }
+                    />
+                ))}
             </ul>
 
             {registerOpen && (
-                <div
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label="Register update"
-                    style={modalBackdrop}
-                    onClick={() => !registerBusy && setRegisterOpen(false)}
-                >
-                    <div
-                        ref={registerDialogRef}
-                        tabIndex={-1}
-                        style={modalCard(theme)}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div
-                            style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                gap: 6,
-                                justifyContent: "space-between",
-                                marginBottom: 8,
-                            }}
-                        >
-                            <strong style={{ minWidth: 0 }}>Register update</strong>
-                            <button
-                                style={S.btn(theme, "ghost")}
-                                onClick={() => setRegisterOpen(false)}
-                                disabled={registerBusy}
-                            >
-                                Close
-                            </button>
-                        </div>
-                        <p style={{ fontSize: 12, color: c.textMuted, margin: "0 0 8px" }}>
-                            POST <code>/updates</code> with SOVD ISO 17978-3 metadata. Pick exactly one of
-                            <code> updated_components</code>, <code>added_components</code>, <code>removed_components</code>
-                            to set the operation kind. <code>x_medkit_*</code> fields are vendor extensions.
-                        </p>
-                        <textarea
-                            value={registerJson}
-                            onChange={(e) => setRegisterJson(e.target.value)}
-                            disabled={registerBusy}
-                            spellCheck={false}
-                            aria-label="Update registration JSON"
-                            style={{
-                                ...S.input(theme),
-                                width: "100%",
-                                minHeight: 220,
-                                fontFamily: "ui-monospace, monospace",
-                                resize: "vertical",
-                            }}
-                        />
-                        {registerError && (
-                            <div style={S.errorBox(theme)} role="alert">
-                                {registerError}
-                            </div>
-                        )}
-                        <div
-                            style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                justifyContent: "flex-end",
-                                gap: 6,
-                                marginTop: 8,
-                            }}
-                        >
-                            <button
-                                style={S.btn(theme, "ghost")}
-                                onClick={() => setRegisterOpen(false)}
-                                disabled={registerBusy}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                style={S.btn(theme, "primary")}
-                                onClick={() => void submitRegister()}
-                                disabled={registerBusy}
-                            >
-                                {registerBusy ? "Registering..." : "Register"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <RegisterDialog
+                    theme={theme}
+                    json={registerJson}
+                    onJsonChange={setRegisterJson}
+                    busy={registerBusy}
+                    error={registerError}
+                    onSubmit={() => void submitRegister()}
+                    onClose={() => setRegisterOpen(false)}
+                    dialogRef={registerDialogRef}
+                />
             )}
 
             {detailFor && (
-                <div
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label="Update details"
-                    style={modalBackdrop}
-                    onClick={closeDetail}
-                >
-                    <div
-                        ref={detailDialogRef}
-                        tabIndex={-1}
-                        style={modalCard(theme)}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div
-                            style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                gap: 6,
-                                justifyContent: "space-between",
-                                marginBottom: 8,
-                            }}
-                        >
-                            <strong
-                                title={detailFor}
-                                style={{
-                                    fontFamily: "ui-monospace, monospace",
-                                    minWidth: 0,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    flex: "1 1 auto",
-                                }}
-                            >
-                                {detailFor}
-                            </strong>
-                            <button style={S.btn(theme, "ghost")} onClick={closeDetail}>
-                                Close
-                            </button>
-                        </div>
-                        {detailLoading ? (
-                            <div style={{ color: c.textMuted, fontSize: 12 }}>Loading...</div>
-                        ) : (
-                            <pre
-                                style={{
-                                    fontSize: 12,
-                                    whiteSpace: "pre-wrap",
-                                    wordBreak: "break-word",
-                                    margin: 0,
-                                    background: c.bgAlt,
-                                    padding: 8,
-                                    borderRadius: 4,
-                                    color: c.text,
-                                }}
-                            >
-                                {JSON.stringify(detail, null, 2)}
-                            </pre>
-                        )}
-                    </div>
-                </div>
+                <DetailsDialog
+                    theme={theme}
+                    id={detailFor}
+                    loading={detailLoading}
+                    detail={detail}
+                    onClose={closeDetail}
+                    dialogRef={detailDialogRef}
+                />
             )}
 
             {confirmAction !== undefined && (
-                <div
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label={`Confirm ${confirmAction.action} update`}
-                    style={modalBackdrop}
-                    onClick={() => setConfirmAction(undefined)}
+                <Modal
+                    theme={theme}
+                    ariaLabel={`Confirm ${confirmAction.action} update`}
+                    onBackdropClick={() => setConfirmAction(undefined)}
+                    dialogRef={confirmDialogRef}
+                    maxWidth={440}
                 >
-                    <div
-                        ref={confirmDialogRef}
-                        tabIndex={-1}
-                        style={{ ...modalCard(theme), maxWidth: 440 }}
-                        onClick={(e) => e.stopPropagation()}
+                    <strong style={{ display: "block", marginBottom: 8 }}>
+                        {CONFIRM_COPY[confirmAction.action]?.title ?? "Confirm action"}
+                    </strong>
+                    <p style={{ fontSize: 12, color: c.text, margin: "0 0 4px" }}>
+                        {CONFIRM_COPY[confirmAction.action]?.body ?? "Proceed with this action?"}
+                    </p>
+                    <p
+                        title={confirmAction.id}
+                        style={{
+                            fontFamily: "ui-monospace, monospace",
+                            fontSize: 12,
+                            color: c.textMuted,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            margin: "0 0 8px",
+                        }}
                     >
-                        <strong style={{ display: "block", marginBottom: 8 }}>
-                            {CONFIRM_COPY[confirmAction.action]?.title ?? "Confirm action"}
-                        </strong>
-                        <p style={{ fontSize: 12, color: c.text, margin: "0 0 4px" }}>
-                            {CONFIRM_COPY[confirmAction.action]?.body ?? "Proceed with this action?"}
-                        </p>
-                        <p
-                            title={confirmAction.id}
-                            style={{
-                                fontFamily: "ui-monospace, monospace",
-                                fontSize: 12,
-                                color: c.textMuted,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                margin: "0 0 8px",
+                        {confirmAction.id}
+                    </p>
+                    <div
+                        style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            justifyContent: "flex-end",
+                            gap: 6,
+                        }}
+                    >
+                        <button style={S.btn(theme, "ghost")} onClick={() => setConfirmAction(undefined)}>
+                            Cancel
+                        </button>
+                        <button
+                            style={S.btn(theme, "danger")}
+                            onClick={() => {
+                                const pending = confirmAction;
+                                setConfirmAction(undefined);
+                                if (pending) void runAction(pending.id, pending.action);
                             }}
                         >
-                            {confirmAction.id}
-                        </p>
-                        <div
-                            style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                justifyContent: "flex-end",
-                                gap: 6,
-                            }}
-                        >
-                            <button style={S.btn(theme, "ghost")} onClick={() => setConfirmAction(undefined)}>
-                                Cancel
-                            </button>
-                            <button
-                                style={S.btn(theme, "danger")}
-                                onClick={() => {
-                                    const pending = confirmAction;
-                                    setConfirmAction(undefined);
-                                    if (pending) void runAction(pending.id, pending.action);
-                                }}
-                            >
-                                {CONFIRM_COPY[confirmAction.action]?.cta ?? "Confirm"}
-                            </button>
-                        </div>
+                            {CONFIRM_COPY[confirmAction.action]?.cta ?? "Confirm"}
+                        </button>
                     </div>
-                </div>
+                </Modal>
             )}
         </div>
     );
@@ -905,29 +595,7 @@ function UpdatesPanelWrapper({
         context.saveState(conn);
     }, [context, conn]);
 
-    useEffect(() => {
-        context.updatePanelSettingsEditor({
-            actionHandler: (action) => {
-                if (action.action !== "update") return;
-                const [section, key] = action.payload.path;
-                if (section !== "conn") return;
-                const next = { ...conn };
-                if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
-                else if (key === "basePath") next.basePath = action.payload.value as string;
-                else return;
-                update(next);
-            },
-            nodes: {
-                conn: {
-                    label: "Gateway Connection",
-                    fields: {
-                        gatewayUrl: { label: "Server URL", input: "string", value: conn.gatewayUrl },
-                        basePath: { label: "Base path", input: "string", value: conn.basePath },
-                    },
-                },
-            },
-        });
-    }, [context, conn, update]);
+    useGatewayConnectionSettings(context, conn, update);
 
     return <UpdatesPanelView baseUrl={joinConnection(conn)} theme={theme} />;
 }

@@ -7,7 +7,13 @@
 // Without these, each panel re-implemented the same boilerplate (~10 lines
 // per panel * 3 panels), drifting subtly each time we touched it.
 
-import type { Immutable, PanelExtensionContext, RenderState } from "@foxglove/extension";
+import type {
+    Immutable,
+    PanelExtensionContext,
+    RenderState,
+    SettingsTreeAction,
+    SettingsTreeFields,
+} from "@foxglove/extension";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
@@ -44,6 +50,64 @@ export function useSharedConnection(overrides?: Partial<GatewayConnection>): Sha
         setConn(next);
     }, []);
     return { conn, update };
+}
+
+export interface GatewayConnectionSettingsOptions {
+    /** Node label; defaults to "Gateway Connection". */
+    label?: string;
+    /** Panel-specific fields rendered after Server URL / Base path in the same node. */
+    extraFields?: SettingsTreeFields;
+    /** Handles "update" actions for keys other than gatewayUrl / basePath. */
+    onExtraAction?: (key: string, value: unknown) => void;
+}
+
+/**
+ * Wires the gateway-connection node into a panel's Foxglove settings editor:
+ * the shared Server URL / Base path fields (whose edits flow back through
+ * `update`), plus any panel-specific fields composed on top via `options`.
+ * Collapses the identical settings-editor boilerplate each panel used to repeat.
+ */
+export function useGatewayConnectionSettings(
+    context: PanelExtensionContext,
+    conn: GatewayConnection,
+    update: (next: GatewayConnection) => void,
+    options?: GatewayConnectionSettingsOptions,
+): void {
+    const label = options?.label ?? "Gateway Connection";
+    const extraFields = options?.extraFields;
+    // Keep the extra-action handler current without making it an effect dep
+    // (callers pass an inline closure).
+    const onExtraActionRef = useRef(options?.onExtraAction);
+    onExtraActionRef.current = options?.onExtraAction;
+    // Re-register when the rendered extra-field values change (they encode panel
+    // state like a poll interval) rather than on every render.
+    const extraFieldsKey = extraFields ? JSON.stringify(extraFields) : "";
+
+    useEffect(() => {
+        context.updatePanelSettingsEditor({
+            actionHandler: (action: SettingsTreeAction) => {
+                if (action.action !== "update") return;
+                const [section, key] = action.payload.path;
+                if (section !== "conn") return;
+                if (key === "gatewayUrl") update({ ...conn, gatewayUrl: action.payload.value as string });
+                else if (key === "basePath") update({ ...conn, basePath: action.payload.value as string });
+                else onExtraActionRef.current?.(key, action.payload.value);
+            },
+            nodes: {
+                conn: {
+                    label,
+                    fields: {
+                        gatewayUrl: { label: "Server URL", input: "string", value: conn.gatewayUrl },
+                        basePath: { label: "Base path", input: "string", value: conn.basePath },
+                        ...(extraFields ?? {}),
+                    },
+                },
+            },
+        });
+        // extraFieldsKey stands in for extraFields' content; the closure reads
+        // the current extraFields on each (re-)registration.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [context, conn, update, label, extraFieldsKey]);
 }
 
 /**

@@ -11,7 +11,7 @@ import { createRoot } from "react-dom/client";
 import { MedkitApiClient } from "./medkit-api";
 import type { RootCapabilities, RootOverview, VersionInfo } from "./types";
 import { type GatewayConnection, joinConnection } from "./shared-connection";
-import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
+import { useColorSchemeTheme, useGatewayConnectionSettings, useSharedConnection } from "./panel-hooks";
 import * as S from "./styles";
 import type { Theme } from "./styles";
 
@@ -277,29 +277,7 @@ function ServerInfoPanelWrapper({
         context.saveState(conn);
     }, [context, conn]);
 
-    useEffect(() => {
-        context.updatePanelSettingsEditor({
-            actionHandler: (action) => {
-                if (action.action !== "update") return;
-                const [section, key] = action.payload.path;
-                if (section !== "conn") return;
-                const next = { ...conn };
-                if (key === "gatewayUrl") next.gatewayUrl = action.payload.value as string;
-                else if (key === "basePath") next.basePath = action.payload.value as string;
-                else return;
-                update(next);
-            },
-            nodes: {
-                conn: {
-                    label: "Gateway Connection",
-                    fields: {
-                        gatewayUrl: { label: "Server URL", input: "string", value: conn.gatewayUrl },
-                        basePath: { label: "Base path", input: "string", value: conn.basePath },
-                    },
-                },
-            },
-        });
-    }, [context, conn, update]);
+    useGatewayConnectionSettings(context, conn, update);
 
     return <ServerInfoPanelView baseUrl={joinConnection(conn)} theme={theme} />;
 }

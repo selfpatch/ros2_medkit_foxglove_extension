@@ -61,7 +61,7 @@ src/
 ├── medkit-api.ts              # HTTP API client for ros2_medkit gateway
 ├── updates-api.ts             # SOVD /updates resource client
 ├── shared-connection.ts       # Cross-panel gateway connection (localStorage)
-├── panel-hooks.ts             # Shared hooks (connection, theme, dialog a11y)
+├── panel-hooks.ts             # Shared hooks (connection, settings editor, theme, dialog a11y)
 ├── schema-utils.ts            # JSON-schema to form model conversion + defaults
 ├── styles.ts                  # Inline style helpers (dark/light theme)
 ├── EntityBrowserPanel.tsx     # Entity tree + capability-driven detail tabs
@@ -73,7 +73,11 @@ src/
 ├── OperationRequestForm.tsx   # Schema-driven request/goal form (controlled)
 ├── OperationsPanel.tsx        # Operation request forms + execution lifecycle
 ├── ServerInfoPanel.tsx        # Server Info panel (gateway version, capabilities, API entry points)
-└── UpdatesPanel.tsx           # SOVD updates catalog + actions
+├── UpdatesPanel.tsx           # SOVD updates catalog + actions
+├── UpdateRow.tsx              # One update row (status badge, progress, actions)
+├── RegisterDialog.tsx         # Register-update JSON dialog
+├── DetailsDialog.tsx          # Update details (GET /updates/{id}) dialog
+└── Modal.tsx                  # Shared modal shell for the Updates dialogs
 ```
 
 The HTTP layer (`medkit-api.ts`, `updates-api.ts`) uses the generated typed client from
