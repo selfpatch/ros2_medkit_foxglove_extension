@@ -4,19 +4,17 @@
 
 ### Capability-driven resource tabs in Entity Browser
 
-The Entity Browser tab bar is now driven by gateway capabilities and live resource
-counts:
+The Entity Browser tab bar shows tabs based on the gateway's reported capabilities:
 
-- Only tabs for capabilities reported as enabled by the gateway are shown.
-- Operations and Configurations tabs are also hidden when the entity has zero items
-  (determined by a parallel prefetch on entity selection). The Faults and Logs tabs
-  are not count-gated - faults arrive live, so the tab stays available whenever the
-  capability is present.
-- Each visible count-checked tab shows a count badge (e.g. "3" next to "configurations").
-- While the prefetch is in flight a skeleton placeholder row is shown instead of a
-  partial tab bar.
-- If the gateway does not expose a capabilities endpoint (fallback mode) all standard
-  tabs are shown without a prefetch, preserving the previous behavior.
+- A tab is shown whenever the gateway reports the matching capability; the tab's
+  own panel shows an empty state when the selected entity has no items. Tab
+  visibility is not gated on item counts, so tabs no longer appear and disappear
+  as you move between entities.
+- Each tab shows a count badge (e.g. "3" next to "configurations") populated by a
+  background fetch on entity selection. The count is informational only - a slow
+  or failed count fetch never hides the tab.
+- If the gateway does not report capabilities (fallback mode, or an older gateway),
+  all standard tabs are shown.
 
 ### Configurations tab: type-aware editors and reset
 
