@@ -243,6 +243,51 @@ describe("ConfigurationsPanel - int/double parameter", () => {
     expect(setConfiguration).not.toHaveBeenCalled();
   });
 
+  it("rejects a cleared (empty) numeric field instead of silently writing 0", async () => {
+    const param = makeParam({ name: "count", value: 7, type: "int" });
+    const setConfiguration = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      setConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/value for count/i)).toBeInTheDocument();
+    });
+
+    // Number("") === 0 would otherwise pass the NaN/integer guards and overwrite
+    // the real value with 0.
+    fireEvent.change(screen.getByLabelText(/value for count/i), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /save count/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/must be a number/i)).toBeInTheDocument();
+    });
+    expect(setConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error when a single-parameter Reset fails", async () => {
+    const param = makeParam({ name: "speed", value: 5, type: "int" });
+    const resetConfiguration = vi.fn().mockRejectedValue(new Error("read-only parameter"));
+    const client = makeClient({
+      listConfigurations: vi.fn().mockResolvedValue(makeConfigs([param])),
+      resetConfiguration,
+    });
+    renderPanel(client);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /reset speed/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /reset speed/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/read-only parameter/i)).toBeInTheDocument();
+    });
+    expect(resetConfiguration).toHaveBeenCalledWith(ENTITY_TYPE, ENTITY_ID, "speed");
+  });
+
   it("rejects a decimal for an int param: shows inline error and does NOT call setConfiguration", async () => {
     const param = makeParam({ name: "count", value: 1, type: "int" });
     const setConfiguration = vi.fn().mockResolvedValue(undefined);
@@ -454,11 +499,11 @@ describe("ConfigurationsPanel - Reset button", () => {
 // ---------------------------------------------------------------------------
 
 describe("ConfigurationsPanel - Reset All button", () => {
-  it("Reset All calls resetAllConfigurations; shows Reset N, M failed from the derived counts and reloads", async () => {
+  it("Reset All shows the derived per-node counts (labeled as nodes) and reloads", async () => {
     const param = makeParam({ name: "speed", value: 5, type: "int" });
     // resetAllConfigurations returns the counts already DERIVED by medkit-api
-    // from the real ConfigurationDeleteMultiStatus 207 body (see medkit-api
-    // test for the derivation from the wire shape).
+    // from the real ConfigurationDeleteMultiStatus 207 body, which has one entry
+    // PER BACKING NODE - so the banner labels them as nodes, not parameters.
     const resetAllConfigurations = vi.fn().mockResolvedValue({ reset_count: 3, failed_count: 1 });
     const listConfigurations = vi.fn().mockResolvedValue(makeConfigs([param]));
     const client = makeClient({ listConfigurations, resetAllConfigurations });
@@ -472,13 +517,13 @@ describe("ConfigurationsPanel - Reset All button", () => {
 
     await waitFor(() => {
       expect(resetAllConfigurations).toHaveBeenCalledWith(ENTITY_TYPE, ENTITY_ID);
-      expect(screen.getByText("Reset 3, 1 failed")).toBeInTheDocument();
+      expect(screen.getByText("Reset 3 of 4 node(s), 1 failed")).toBeInTheDocument();
       // reload: listConfigurations called at least twice (initial + after reset all)
       expect(listConfigurations.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
-  it("Reset All with undefined result (no body) does not show status banner but still reloads", async () => {
+  it("Reset All with a 204 (no body) shows a neutral success confirmation and reloads", async () => {
     const param = makeParam({ name: "speed", value: 5, type: "int" });
     const resetAllConfigurations = vi.fn().mockResolvedValue(undefined);
     const listConfigurations = vi.fn().mockResolvedValue(makeConfigs([param]));
@@ -493,6 +538,8 @@ describe("ConfigurationsPanel - Reset All button", () => {
 
     await waitFor(() => {
       expect(resetAllConfigurations).toHaveBeenCalled();
+      // A clean all-success reset is confirmed rather than silent.
+      expect(screen.getByText("All configurations reset")).toBeInTheDocument();
       expect(listConfigurations.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();

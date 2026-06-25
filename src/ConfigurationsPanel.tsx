@@ -97,6 +97,13 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
           return;
         }
       } else if (isNumericType(param.type)) {
+        // Number("") and Number("   ") are 0, which would pass the NaN/integer
+        // guards below and silently overwrite the real value with 0 - so reject
+        // an empty/whitespace field explicitly first.
+        if (inputValue.trim() === "") {
+          setParseError("Must be a number");
+          return;
+        }
         const n = Number(inputValue);
         if (Number.isNaN(n)) {
           setParseError("Must be a number");
@@ -149,8 +156,13 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
 
   const handleReset = useCallback(async () => {
     setResetting(true);
+    setParseError(null);
     try {
       await onReset(param.name);
+    } catch (err) {
+      // A failed reset (read-only / transient node failure) would otherwise be
+      // swallowed by `void handleReset()` and just stop the spinner. Surface it.
+      setParseError(err instanceof Error ? err.message : "Reset failed");
     } finally {
       setResetting(false);
     }
@@ -247,11 +259,6 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
             Save
           </button>
         </div>
-        {parseError != null && (
-          <span role="alert" style={{ fontSize: 11, color: c.critical }}>
-            {parseError}
-          </span>
-        )}
       </div>
     );
   } else {
@@ -287,11 +294,6 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
             Save
           </button>
         </div>
-        {parseError != null && (
-          <span role="alert" style={{ fontSize: 11, color: c.critical }}>
-            {parseError}
-          </span>
-        )}
       </div>
     );
   }
@@ -301,6 +303,13 @@ function ParamRow({ param, theme, onSave, onReset }: ParamRowProps): ReactElemen
       <div style={labelStyle}>{param.name}</div>
       <div style={valueColStyle}>
         {editor}
+        {/* Row-level error covers every editor type - including the bool toggle,
+            which has no input - so a failed Save or Reset is always surfaced. */}
+        {parseError != null && (
+          <span role="alert" style={{ fontSize: 11, color: c.critical }}>
+            {parseError}
+          </span>
+        )}
       </div>
       <span style={badgeStyle}>{param.type}</span>
       {!param.read_only && (
@@ -388,7 +397,18 @@ export function ConfigurationsPanel({
       const result = await client.resetAllConfigurations(entityType, entityId);
       if (!mountedRef.current) return;
       if (result != null) {
-        setResetAllStatus(`Reset ${result.reset_count}, ${result.failed_count} failed`);
+        // The 207 body has one result entry PER BACKING NODE (not per parameter),
+        // so these counts are node counts - label them as such.
+        const total = result.reset_count + result.failed_count;
+        setResetAllStatus(
+          result.failed_count > 0
+            ? `Reset ${result.reset_count} of ${total} node(s), ${result.failed_count} failed`
+            : `Reset ${result.reset_count} node(s)`,
+        );
+      } else {
+        // All-success path returns 204 (no body) - confirm it so a clean reset
+        // is not silent.
+        setResetAllStatus("All configurations reset");
       }
       await load();
     } catch (err) {
