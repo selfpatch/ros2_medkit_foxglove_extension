@@ -8,14 +8,23 @@ The Data tab can now read a topic's current value and publish a message to it,
 not just list topics:
 
 - Each topic has a Read action that fetches the current sampled value
-  (`GET /{entity}/data/{topic}`) and shows it, with a Refresh button.
-- Each topic with a known message type gets a Publish action that opens an inline
+  (`GET /{entity}/data/{topic}`) and shows it, with a Refresh button. A topic the
+  gateway has never sampled (status `metadata_only`) reads as "no data sampled"
+  rather than an empty object.
+- A topic the entity subscribes to (or whose direction the gateway does not
+  report), with a known message type, gets a Publish action that opens an inline
   form. When the gateway exposes the topic's input schema the form is
   schema-driven (per-field editors); otherwise it falls back to a raw JSON editor.
-- Publishing sends `PUT /{entity}/data/{topic}` with `{ type, data }`, which the
-  gateway turns into a one-shot publisher. Success and errors are shown inline.
-- Topics without a known message type show no Publish action (the gateway needs
-  the type to construct the publisher).
+  Output-only topics (ones the entity only publishes, e.g. a sensor stream) and
+  topics without a known message type show no Publish action.
+- Publishing is two-step (Publish, then Confirm), because writing to a live topic
+  can actuate the system, and sends `PUT /{entity}/data/{topic}` with
+  `{ type, data }`, which the gateway turns into a one-shot publisher. Success and
+  errors are shown inline.
+- Known limitation: the gateway describes every integer field as JSON-Schema
+  `integer` with no width, so the form cannot distinguish `int64`/`uint64` fields
+  from 32-bit ones; 64-bit values beyond 2^53 entered in the schema form may be
+  rounded. (Matches `ros2_medkit_web_ui`.)
 
 ### Entity lifecycle status control in Entity Browser
 
@@ -111,9 +120,11 @@ operation support:
 - Cancel running actions via DELETE.
 - Per-operation execution history (last 10 runs) with timestamp and terminal
   status.
-- `int64`/`uint64` form fields are carried as decimal strings end-to-end (the
-  gateway parses them back losslessly) so values beyond 2^53 are not rounded by
-  a JS number. This diverges from `ros2_medkit_web_ui`, which uses plain numbers.
+- `int64`/`uint64` form fields are carried as decimal strings end-to-end when a
+  field is typed as such, so the gateway can parse them back losslessly without a
+  JS number rounding values beyond 2^53. Note the gateway currently emits all
+  integer widths as JSON-Schema `integer`, so this path is not exercised for
+  gateway-sourced schemas yet (see the Data tab known limitation above).
 
 ### Migrate HTTP layer to generated typed client
 

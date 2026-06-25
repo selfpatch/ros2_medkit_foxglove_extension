@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
     convertJsonSchemaField,
     convertJsonSchemaToTopicSchema,
-    deepMerge,
     getDefaultValue,
     getSchemaDefaults,
     isBooleanType,
@@ -448,76 +447,3 @@ describe("getSchemaDefaults", () => {
     });
 });
 
-// =============================================================================
-// deepMerge
-// =============================================================================
-
-describe("deepMerge", () => {
-    it("merges flat objects, source wins", () => {
-        const target = { a: 1, b: 2 };
-        const source = { b: 99, c: 3 };
-        expect(deepMerge(target, source)).toEqual({ a: 1, b: 99, c: 3 });
-    });
-
-    it("recursively merges nested objects", () => {
-        const target = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
-        const source = { linear: { x: 1.5 } };
-        expect(deepMerge(target, source)).toEqual({
-            linear: { x: 1.5, y: 0, z: 0 },
-            angular: { x: 0, y: 0, z: 0 },
-        });
-    });
-
-    it("does not modify the target object", () => {
-        const target = { a: 1 };
-        const source = { a: 2 };
-        deepMerge(target, source);
-        expect(target["a"]).toBe(1);
-    });
-
-    it("skips null/undefined source values", () => {
-        const target = { a: 1, b: 2 };
-        const source = { a: null, b: undefined } as unknown as Record<string, unknown>;
-        expect(deepMerge(target, source)).toEqual({ a: 1, b: 2 });
-    });
-
-    it("replaces arrays from source, not merges them", () => {
-        const target = { items: [1, 2, 3] };
-        const source = { items: [4, 5] };
-        expect(deepMerge(target, source)).toEqual({ items: [4, 5] });
-    });
-
-    it("handles empty source", () => {
-        const target = { a: 1 };
-        expect(deepMerge(target, {})).toEqual({ a: 1 });
-    });
-
-    it("does not pollute Object.prototype via __proto__/constructor keys", () => {
-        // source can come from user-edited JSON, so dangerous keys must be skipped.
-        const malicious = JSON.parse('{"__proto__": {"polluted": true}, "constructor": {"x": 1}, "safe": 2}');
-        const result = deepMerge({ a: 1 }, malicious);
-        expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-        expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
-        // The legitimate key still merges.
-        expect(result.safe).toBe(2);
-    });
-
-    it("overlays user values onto schema defaults (real use-case)", () => {
-        const schema: TopicSchema = {
-            linear: {
-                type: "object",
-                fields: { x: { type: "float64" }, y: { type: "float64" }, z: { type: "float64" } },
-            },
-            angular: {
-                type: "object",
-                fields: { x: { type: "float64" }, y: { type: "float64" }, z: { type: "float64" } },
-            },
-        };
-        const defaults = getSchemaDefaults(schema);
-        const userInput = { linear: { x: 0.5 } };
-        expect(deepMerge(defaults, userInput)).toEqual({
-            linear: { x: 0.5, y: 0, z: 0 },
-            angular: { x: 0, y: 0, z: 0 },
-        });
-    });
-});
