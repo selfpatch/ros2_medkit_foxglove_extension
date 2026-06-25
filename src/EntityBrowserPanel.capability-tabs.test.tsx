@@ -181,13 +181,13 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
       ]),
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /^operations/i })).toBeInTheDocument();
-    });
     // Badge count "2" must live INSIDE the operations tab (scoped so it cannot
-    // pass vacuously against some unrelated "2" elsewhere in the DOM).
-    const opsTab = screen.getByRole("tab", { name: /^operations/i });
-    expect(within(opsTab).getByText("2")).toBeInTheDocument();
+    // pass vacuously against some unrelated "2" elsewhere in the DOM). The count
+    // resolves asynchronously, so wait for it rather than reading it eagerly.
+    await waitFor(() => {
+      const opsTab = screen.getByRole("tab", { name: /^operations/i });
+      expect(within(opsTab).getByText("2")).toBeInTheDocument();
+    });
   });
 
   it("shows configurations tab with badge when parameters > 0", async () => {
@@ -204,10 +204,9 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
+      const configTab = screen.getByRole("tab", { name: /^configurations/i });
+      expect(within(configTab).getByText("3")).toBeInTheDocument();
     });
-    const configTab = screen.getByRole("tab", { name: /^configurations/i });
-    expect(within(configTab).getByText("3")).toBeInTheDocument();
   });
 
   it("shows faults tab with badge when fault count > 0", async () => {
@@ -225,10 +224,9 @@ describe("EntityBrowserTabBar - count>0 shows tab with badge", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
+      const faultsTab = screen.getByRole("tab", { name: /^faults/i });
+      expect(within(faultsTab).getByText("1")).toBeInTheDocument();
     });
-    const faultsTab = screen.getByRole("tab", { name: /^faults/i });
-    expect(within(faultsTab).getByText("1")).toBeInTheDocument();
   });
 });
 

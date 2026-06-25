@@ -9,11 +9,14 @@ Apps and components now show a lifecycle control in the entity detail (gateway
 
 - Live readiness badge (ready / notReady) fetched from `GET /{entity}/status`.
 - A readiness lamp on each app/component node in the entity tree (green = ready,
-  red = notReady; none when the gateway has no lifecycle provider). It stays in
-  sync with transitions made from the detail control.
+  amber = notReady; none when the gateway has no lifecycle provider). Lamps
+  refresh on a short interval and stay in sync with transitions made from the
+  detail control.
 - Transition actions: start, restart, force-restart, shutdown, force-shutdown.
-  Actions are gated by the current readiness (e.g. Start is disabled when ready),
-  and the destructive ones (shutdown / force-shutdown) ask for inline confirmation.
+  Each action is gated on whether the gateway advertises it for the current state
+  (so the UI permits exactly what the gateway accepts, and stays disabled while the
+  status is unknown), and the destructive ones (shutdown / force-shutdown) ask for
+  inline confirmation.
 - A gateway without a lifecycle provider returns 501; this shows as a disabled
   "not available" state rather than an error.
 - Areas and functions have no lifecycle status, so the control is not shown for them.
