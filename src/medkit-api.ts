@@ -25,8 +25,9 @@ import type {
   BulkDataList,
 } from "./types";
 
-import { createGatewayClient, MedkitApiError, isMedkitError } from "./gateway-client";
+import { createGatewayClient, MedkitApiError, isMedkitError, normalizeBaseUrl } from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
+import { joinConnection } from "./shared-connection";
 import {
   getEntityData,
   getEntityDataItem,
@@ -54,20 +55,12 @@ function throwApiError(error: unknown): never {
     : String(error));
 }
 
-function normalizeUrl(url: string): string {
-  let u = url.trim();
-  if (u.endsWith("/")) u = u.slice(0, -1);
-  if (!u.startsWith("http://") && !u.startsWith("https://")) u = `http://${u}`;
-  return u;
-}
-
-function normalizeBasePath(path: string): string {
-  let p = path.trim();
-  while (p.startsWith("/")) p = p.slice(1);
-  while (p.endsWith("/")) p = p.slice(0, -1);
-  return p;
-}
-
+/** Extract the array from a gateway collection response.
+ *
+ * The gateway's collection endpoints are contractually `{items: [...]}`
+ * (AreaList / ComponentList / FunctionList in the OpenAPI schema). The bare
+ * `Array.isArray` branch is defensive only - kept so a non-conformant gateway
+ * returning a raw array still yields a usable list rather than nothing. */
 function unwrapItems<T>(response: unknown): T[] {
   if (Array.isArray(response)) return response as T[];
   const w = response as { items?: T[] };
@@ -79,22 +72,17 @@ function unwrapItems<T>(response: unknown): T[] {
 // ---------------------------------------------------------------------------
 
 export class MedkitApiClient {
-  private readonly base: string;
-  private readonly prefix: string;
+  private readonly resolvedBase: string;
   private readonly client: MedkitClient;
 
   constructor(serverUrl: string, baseEndpoint = "") {
-    this.base = normalizeUrl(serverUrl);
-    this.prefix = normalizeBasePath(baseEndpoint);
-    this.client = createGatewayClient({
-      gatewayUrl: serverUrl,
-      basePath: baseEndpoint,
-    });
-  }
-
-  private url(endpoint: string): string {
-    const p = this.prefix ? `${this.prefix}/` : "";
-    return `${this.base}/${p}${endpoint}`;
+    const conn = { gatewayUrl: serverUrl, basePath: baseEndpoint };
+    // Resolve the base URL exactly as the typed client does internally
+    // (joinConnection + normalizeBaseUrl, which forces a trailing /api/v1).
+    // Bulk-data download URLs are built from this same value so they cannot
+    // diverge from the client's request root for a non-default basePath.
+    this.resolvedBase = normalizeBaseUrl(joinConnection(conn));
+    this.client = createGatewayClient(conn);
   }
 
   // ── Health ────────────────────────────────────────────────────────
@@ -113,6 +101,10 @@ export class MedkitApiClient {
   async getVersionInfo(): Promise<VersionInfo> {
     const { data, error } = await this.client.GET("/version-info");
     if (error) throwApiError(error);
+    // openapi-fetch leaves `data` undefined on a 2xx empty/204 body with no
+    // error, but the return type promises a non-optional VersionInfo. Guard so
+    // callers get a thrown error here instead of a TypeError at the access site.
+    if (!data) throw new Error("Empty response from /version-info");
     return data;
   }
 
@@ -121,7 +113,7 @@ export class MedkitApiClient {
   async listAreas(): Promise<SovdEntity[]> {
     const { data, error } = await this.client.GET("/areas");
     if (error) throwApiError(error);
-    const items = data?.items ?? [];
+    const items = unwrapItems<{ id: string }>(data as unknown);
     return items.map((a) => ({
       id: a.id,
       name: a.id,
@@ -138,14 +130,7 @@ export class MedkitApiClient {
   async listComponents(): Promise<SovdEntity[]> {
     const { data, error } = await this.client.GET("/components");
     if (error) throwApiError(error);
-    const raw = data as unknown;
-    const items = (Array.isArray(raw)
-      ? raw
-      : ((raw as Record<string, unknown>).items ?? [])) as Array<{
-        id?: unknown;
-        name?: string;
-        description?: string;
-      }>;
+    const items = unwrapItems<{ id?: unknown; name?: string; description?: string }>(data as unknown);
     return items
       // Drop items without a string id, otherwise id:undefined produces a
       // bogus "/components/undefined" request when the node is expanded.
@@ -168,8 +153,7 @@ export class MedkitApiClient {
       params: { path: { area_id: areaId } },
     });
     if (error) throwApiError(error);
-    const raw = data as unknown;
-    const items = Array.isArray(raw) ? raw : ((raw as Record<string, unknown>).components ?? (raw as Record<string, unknown>).items ?? []) as Array<{ id: string; fqn?: string }>;
+    const items = unwrapItems<{ id: string; fqn?: string }>(data as unknown);
     return items.map((c) => ({
       id: c.id,
       name: c.fqn || c.id,
@@ -473,11 +457,26 @@ export class MedkitApiClient {
    * Build download URL for a bulk data URI (as returned in snapshot bulk_data_uri).
    */
   getBulkDataDownloadUrl(bulkDataUri: string): string {
-    // bulkDataUri is an absolute path like "/apps/motor/bulk-data/rosbags/FAULT_CODE"
-    // Strip leading slash to make it a relative endpoint for url()
-    return this.url(bulkDataUri.replace(/^\//, ""));
+    // bulkDataUri is an absolute path like "/apps/motor/bulk-data/rosbags/FAULT_CODE".
+    // Strip the leading slash and join onto the same resolved base the typed
+    // client uses, so the download root always matches the API request root.
+    return `${this.resolvedBase}/${bulkDataUri.replace(/^\//, "")}`;
   }
 
+  /**
+   * Subscribe to the fault SSE stream.
+   *
+   * Backed by the typed client's `SseStream` (async-iterable) rather than a raw
+   * `EventSource`. Auto-reconnect IS preserved - the stream reconnects
+   * internally with backoff up to `maxRetries`. Two behavior deltas vs a bare
+   * `EventSource` remain and are intentional:
+   *  - `onError` fires only after retries are exhausted, not on every transient
+   *    drop (a brief reconnect no longer surfaces an error to the dashboard).
+   *  - A clean server-side close ends the `for await` loop silently with no
+   *    reconnect (a bare `EventSource` would have reconnected). The gateway
+   *    keeps the stream open indefinitely, so this only happens on a deliberate
+   *    server close; callers wanting unconditional reconnect must re-subscribe.
+   */
   subscribeFaultStream(
     onConfirmed: (f: Fault) => void,
     onCleared: (f: Fault) => void,

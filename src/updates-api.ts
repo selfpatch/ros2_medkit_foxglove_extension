@@ -42,21 +42,21 @@ function throwFromClientError(error: unknown): never {
     throw new UpdatesApiError(msg, 0);
 }
 
-// Memo: reuse the last client for the same (baseUrl, fetch) pair so the
-// status-poll loop (which fires several times per cycle) does not allocate
-// a new openapi-fetch client on every call.
-let _memoClient: MedkitClient | undefined;
-let _memoBaseUrl: string | undefined;
-let _memoFetch: typeof fetch | undefined;
+// Memo: reuse a client per baseUrl so the status-poll loop (which fires
+// several times per cycle) does not allocate a new openapi-fetch client on
+// every call. Keyed by baseUrl (and validated against the fetch impl) so two
+// UpdatesPanel instances pointed at different gateways do not evict each
+// other's client on every poll - a single slot would thrash between them.
+const clientCache = new Map<string, { fetch: typeof fetch; client: MedkitClient }>();
 
 function getClient(baseUrl: string, fetchImpl: typeof fetch): MedkitClient {
-    if (_memoClient && _memoBaseUrl === baseUrl && _memoFetch === fetchImpl) {
-        return _memoClient;
+    const cached = clientCache.get(baseUrl);
+    if (cached && cached.fetch === fetchImpl) {
+        return cached.client;
     }
-    _memoClient = createGatewayClientForUrl(baseUrl, { fetch: fetchImpl });
-    _memoBaseUrl = baseUrl;
-    _memoFetch = fetchImpl;
-    return _memoClient;
+    const client = createGatewayClientForUrl(baseUrl, { fetch: fetchImpl });
+    clientCache.set(baseUrl, { fetch: fetchImpl, client });
+    return client;
 }
 
 /** GET /updates - returns list of update IDs (SOVD: `{items: [<id>]}`). */
@@ -125,6 +125,10 @@ export async function fetchUpdateDetail(
         signal,
     });
     if (error) throwFromClientError(error);
+    // openapi-fetch leaves `data` undefined on a 2xx empty/204 body with no
+    // error; surface that as an error rather than returning undefined cast to
+    // a Record (a TypeError would otherwise surface at the caller's access).
+    if (data == null) throw new UpdatesApiError("Empty response from /updates/{id}", 0);
     return data as unknown as Record<string, unknown>;
 }
 
