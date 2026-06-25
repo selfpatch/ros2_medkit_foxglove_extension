@@ -31,6 +31,8 @@ import type {
   LogEntry,
   LogListXMedkit,
   LogConfiguration,
+  LifecycleAction,
+  LifecycleStatusResponse,
 } from "./types";
 
 export type { OperationExecution };
@@ -59,8 +61,10 @@ import {
   getEntityLogs as dispatchGetEntityLogs,
   getEntityLogsConfiguration as dispatchGetEntityLogsConfiguration,
   putEntityLogsConfiguration as dispatchPutEntityLogsConfiguration,
+  getEntityStatus as dispatchGetEntityStatus,
+  setEntityStatus as dispatchSetEntityStatus,
 } from "./api-dispatch";
-import type { EntityLogsParams } from "./api-dispatch";
+import type { EntityLogsParams, LifecycleEntityType } from "./api-dispatch";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -702,6 +706,39 @@ export class MedkitApiClient {
     config: LogConfiguration,
   ): Promise<void> {
     const { error } = await dispatchPutEntityLogsConfiguration(this.client, entityType, entityId, config);
+    if (error) throwApiError(error);
+  }
+
+  // ── Lifecycle status (apps + components) ──────────────────────────
+
+  /**
+   * Get the lifecycle status for an app or component. Returns "unavailable"
+   * when the gateway has no lifecycle provider (HTTP 501) so the caller can show
+   * a disabled state instead of an error; any other failure throws.
+   */
+  async getEntityStatus(
+    entityType: LifecycleEntityType,
+    entityId: string,
+  ): Promise<LifecycleStatusResponse | "unavailable"> {
+    const { data, error } = await dispatchGetEntityStatus(this.client, entityType, entityId);
+    if (error) {
+      if (isMedkitError(error) && error.status === 501) return "unavailable";
+      throwApiError(error);
+    }
+    if (!data) throw new Error("Empty response from /status");
+    return data as unknown as LifecycleStatusResponse;
+  }
+
+  /**
+   * Request a lifecycle transition. Throws a MedkitApiError on failure; callers
+   * branch on `.status === 501` to detect a gateway without a lifecycle provider.
+   */
+  async setEntityStatus(
+    entityType: LifecycleEntityType,
+    entityId: string,
+    action: LifecycleAction,
+  ): Promise<void> {
+    const { error } = await dispatchSetEntityStatus(this.client, entityType, entityId, action);
     if (error) throwApiError(error);
   }
 

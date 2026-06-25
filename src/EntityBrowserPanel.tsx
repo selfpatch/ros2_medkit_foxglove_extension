@@ -22,6 +22,7 @@ import { useColorSchemeTheme, useSharedConnection } from "./panel-hooks";
 import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { ConfigurationsPanel } from "./ConfigurationsPanel";
+import { EntityStatusControl } from "./EntityStatusControl";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -543,6 +544,17 @@ function EntityBrowserPanel({
                 {selected.type}
               </span>
             </h3>
+
+            {/* Lifecycle status control - apps and components only (areas and
+                functions have no lifecycle status). */}
+            {client != null && (selectedType === "apps" || selectedType === "components") && (
+              <EntityStatusControl
+                client={client}
+                entityType={selectedType}
+                entityId={selected.id}
+                theme={theme}
+              />
+            )}
 
             {/* Capability-driven tab bar */}
             <EntityBrowserTabBar

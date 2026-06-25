@@ -13,7 +13,7 @@
  */
 
 import type { MedkitClient } from "./gateway-client";
-import type { SovdResourceEntityType } from "./types";
+import type { LifecycleAction, SovdResourceEntityType } from "./types";
 
 // =============================================================================
 // Data (Topics)
@@ -524,5 +524,66 @@ export function postEntityExecution(
         params: { path: { function_id: entityId, operation_id: operationId } },
         body,
       });
+  }
+}
+
+// =============================================================================
+// Lifecycle status (apps + components only)
+// =============================================================================
+
+/** Entity types that expose a lifecycle status. Areas and functions do not. */
+export type LifecycleEntityType = Extract<SovdResourceEntityType, "apps" | "components">;
+
+export function getEntityStatus(
+  client: MedkitClient,
+  entityType: LifecycleEntityType,
+  entityId: string,
+  signal?: AbortSignal,
+) {
+  switch (entityType) {
+    case "apps":
+      return client.GET("/apps/{app_id}/status", { params: { path: { app_id: entityId } }, signal });
+    case "components":
+      return client.GET("/components/{component_id}/status", {
+        params: { path: { component_id: entityId } },
+        signal,
+      });
+  }
+}
+
+export function setEntityStatus(
+  client: MedkitClient,
+  entityType: LifecycleEntityType,
+  entityId: string,
+  action: LifecycleAction,
+  signal?: AbortSignal,
+) {
+  if (entityType === "apps") {
+    const params = { path: { app_id: entityId } };
+    switch (action) {
+      case "start":
+        return client.PUT("/apps/{app_id}/status/start", { params, signal });
+      case "restart":
+        return client.PUT("/apps/{app_id}/status/restart", { params, signal });
+      case "force-restart":
+        return client.PUT("/apps/{app_id}/status/force-restart", { params, signal });
+      case "shutdown":
+        return client.PUT("/apps/{app_id}/status/shutdown", { params, signal });
+      case "force-shutdown":
+        return client.PUT("/apps/{app_id}/status/force-shutdown", { params, signal });
+    }
+  }
+  const params = { path: { component_id: entityId } };
+  switch (action) {
+    case "start":
+      return client.PUT("/components/{component_id}/status/start", { params, signal });
+    case "restart":
+      return client.PUT("/components/{component_id}/status/restart", { params, signal });
+    case "force-restart":
+      return client.PUT("/components/{component_id}/status/force-restart", { params, signal });
+    case "shutdown":
+      return client.PUT("/components/{component_id}/status/shutdown", { params, signal });
+    case "force-shutdown":
+      return client.PUT("/components/{component_id}/status/force-shutdown", { params, signal });
   }
 }

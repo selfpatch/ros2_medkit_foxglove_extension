@@ -433,3 +433,28 @@ export interface RootOverview {
   auth?: RootAuth | null;
   tls?: RootTls | null;
 }
+
+// ===========================================================================
+// Entity lifecycle status (gateway 0.6.0 lifecycle API). Apps and components
+// only - areas and functions have no lifecycle status.
+// ===========================================================================
+
+export type LifecycleStatus = "ready" | "notReady";
+
+export type LifecycleAction =
+  | "start"
+  | "restart"
+  | "force-restart"
+  | "shutdown"
+  | "force-shutdown";
+
+/** GET /{apps|components}/{id}/status body. The action keys carry the transition
+ * endpoint URIs; the panel only needs `status`. */
+export interface LifecycleStatusResponse {
+  status: LifecycleStatus;
+  start?: string | null;
+  restart?: string | null;
+  "force-restart"?: string | null;
+  shutdown?: string | null;
+  "force-shutdown"?: string | null;
+}
