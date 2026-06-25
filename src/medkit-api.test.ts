@@ -130,6 +130,38 @@ describe("MedkitApiClient.listBulkDataCategories", () => {
     });
 });
 
+describe("MedkitApiClient base URL resolution", () => {
+    it("builds bulk-data download URLs from the same root the API client uses (non-default basePath)", async () => {
+        let requestUrl = "";
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (req: Request) => {
+                requestUrl = req.url;
+                return new Response(JSON.stringify({ items: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }),
+        );
+        // The typed client forces a trailing /api/v1, so a "sovd" basePath
+        // resolves to http://gw:8080/sovd/api/v1 for BOTH API calls and
+        // downloads. The bug was getBulkDataDownloadUrl omitting /api/v1,
+        // pointing downloads at a different root than the API requests.
+        const client = new MedkitApiClient("http://gw:8080", "sovd");
+        await client.listComponents();
+        const root = "http://gw:8080/sovd/api/v1";
+        expect(requestUrl).toBe(`${root}/components`);
+        const dl = client.getBulkDataDownloadUrl("/apps/motor/bulk-data/rosbags/CODE");
+        expect(dl).toBe(`${root}/apps/motor/bulk-data/rosbags/CODE`);
+    });
+
+    it("getVersionInfo throws on an empty 2xx body instead of returning undefined", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+        const client = new MedkitApiClient("http://gw", "api/v1");
+        await expect(client.getVersionInfo()).rejects.toThrow("Empty response from /version-info");
+    });
+});
+
 describe("MedkitApiClient.listBulkData", () => {
     it("returns { items: [] } on gateway error instead of throwing", async () => {
         stubFetchError(500);

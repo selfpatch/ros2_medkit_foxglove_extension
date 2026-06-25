@@ -6,7 +6,7 @@
 
 import { createMedkitClient } from "@selfpatch/ros2-medkit-client-ts";
 export type { MedkitClient } from "@selfpatch/ros2-medkit-client-ts";
-export { MedkitApiError, isMedkitError } from "@selfpatch/ros2-medkit-client-ts";
+export { MedkitApiError, isMedkitError, normalizeBaseUrl } from "@selfpatch/ros2-medkit-client-ts";
 
 import { joinConnection, type GatewayConnection } from "./shared-connection";
 

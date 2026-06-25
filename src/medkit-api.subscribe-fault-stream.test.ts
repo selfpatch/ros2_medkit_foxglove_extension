@@ -24,6 +24,7 @@ vi.mock("./gateway-client", () => {
             }
         },
         isMedkitError: () => false,
+        normalizeBaseUrl: (url: string) => url,
         createGatewayClient: () => ({
             GET: vi.fn(async () => ({ data: { items: [] }, error: undefined })),
             streams: {
