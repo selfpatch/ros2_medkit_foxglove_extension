@@ -35,6 +35,9 @@ export interface ComponentTopic {
   subscriber_count?: number;
   isPublisher?: boolean;
   isSubscriber?: boolean;
+  /** Message input schema (from x-medkit.type_info), used to render the publish
+   * form. Absent when the gateway omits type_info for the topic. */
+  schema?: TopicSchema;
 }
 
 // =============================================================================

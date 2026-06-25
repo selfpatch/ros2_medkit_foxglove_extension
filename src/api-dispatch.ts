@@ -62,6 +62,39 @@ export function getEntityDataItem(
   }
 }
 
+/** Publish a message to a topic: PUT /{entity}/data/{data_id} with
+ * `{ type: "pkg/msg/Type", data: <message> }`. */
+export function putEntityDataItem(
+  client: MedkitClient,
+  entityType: SovdResourceEntityType,
+  entityId: string,
+  dataId: string,
+  body: { type: string; data: unknown },
+) {
+  switch (entityType) {
+    case "apps":
+      return client.PUT("/apps/{app_id}/data/{data_id}", {
+        params: { path: { app_id: entityId, data_id: dataId } },
+        body,
+      });
+    case "components":
+      return client.PUT("/components/{component_id}/data/{data_id}", {
+        params: { path: { component_id: entityId, data_id: dataId } },
+        body,
+      });
+    case "areas":
+      return client.PUT("/areas/{area_id}/data/{data_id}", {
+        params: { path: { area_id: entityId, data_id: dataId } },
+        body,
+      });
+    case "functions":
+      return client.PUT("/functions/{function_id}/data/{data_id}", {
+        params: { path: { function_id: entityId, data_id: dataId } },
+        body,
+      });
+  }
+}
+
 // =============================================================================
 // Configurations
 // =============================================================================

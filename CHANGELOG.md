@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Publish to topics from the Data tab
+
+The Data tab can now publish a message to a topic, not just list topics:
+
+- Each topic with a known message type gets a Publish action that opens an inline
+  form. When the gateway exposes the topic's input schema the form is
+  schema-driven (per-field editors); otherwise it falls back to a raw JSON editor.
+- Publishing sends `PUT /{entity}/data/{topic}` with `{ type, data }`, which the
+  gateway turns into a one-shot publisher. Success and errors are shown inline.
+- Topics without a known message type show no Publish action (the gateway needs
+  the type to construct the publisher).
+
 ### Entity lifecycle status control in Entity Browser
 
 Apps and components now show a lifecycle control in the entity detail (gateway
