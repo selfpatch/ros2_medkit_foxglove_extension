@@ -23,6 +23,7 @@ import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { ConfigurationsPanel } from "./ConfigurationsPanel";
 import { EntityStatusControl } from "./EntityStatusControl";
+import type { LifecycleEntityType } from "./api-dispatch";
 import type {
   SovdEntity,
   ComponentTopic,
@@ -53,6 +54,10 @@ interface TreeNode {
 }
 
 type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
+
+// Readiness shown by the entity-tree lamp. "unavailable" = gateway has no
+// lifecycle provider (501); "unknown" = not fetched / fetch failed.
+type TreeStatus = "ready" | "notReady" | "unavailable" | "unknown";
 
 const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", "logs"];
 
@@ -282,6 +287,12 @@ function EntityBrowserPanel({
 
   // ── Foxglove state persistence + settings editor ───────────────
 
+  // Per-entity lifecycle readiness for the tree lamp (apps/components only).
+  // Keyed by `${entityType}:${id}`. Fetched lazily as nodes appear; the in-flight
+  // set dedupes so each entity is queried once per connection.
+  const [statusByEntity, setStatusByEntity] = useState<Record<string, TreeStatus>>({});
+  const statusInFlightRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     context.saveState(state);
   }, [context, state]);
@@ -320,6 +331,9 @@ function EntityBrowserPanel({
     // different gateway must not inherit the old capability set (which would
     // leave tabs gated on the wrong server's flags until getRoot resolves).
     setCapabilities(null);
+    // Drop cached lifecycle statuses from the previous gateway.
+    setStatusByEntity({});
+    statusInFlightRef.current = new Set();
     try {
       const ok = await c.ping();
       if (!ok) {
@@ -365,6 +379,41 @@ function EntityBrowserPanel({
   useEffect(() => {
     void doConnect();
   }, [doConnect]);
+
+  // Fetch lifecycle readiness for component/app nodes as they appear in the tree,
+  // to drive the tree lamp. Each entity is queried once per connection (the
+  // in-flight set dedupes); areas/functions have no lifecycle status.
+  useEffect(() => {
+    if (!client) return;
+    const entities: SovdEntity[] = [];
+    const walk = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        entities.push(n.entity);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(tree);
+    for (const e of entities) {
+      const eType: LifecycleEntityType | null =
+        e.type === "app" ? "apps" : e.type === "component" ? "components" : null;
+      if (eType == null) continue;
+      const key = `${eType}:${e.id}`;
+      if (statusInFlightRef.current.has(key)) continue;
+      statusInFlightRef.current.add(key);
+      void client.getEntityStatus(eType, e.id).then(
+        (res) => {
+          const v: TreeStatus =
+            res === "unavailable"
+              ? "unavailable"
+              : res.status === "ready" || res.status === "notReady"
+                ? res.status
+                : "unknown";
+          setStatusByEntity((prev) => ({ ...prev, [key]: v }));
+        },
+        () => setStatusByEntity((prev) => ({ ...prev, [key]: "unknown" })),
+      );
+    }
+  }, [tree, client]);
 
   // ── Tree expand ─────────────────────────────────────────────────
 
@@ -507,6 +556,7 @@ function EntityBrowserPanel({
                 depth={0}
                 theme={theme}
                 selected={selected}
+                statusByEntity={statusByEntity}
                 onToggle={toggleNode}
                 onSelect={selectEntity}
               />
@@ -524,6 +574,7 @@ function EntityBrowserPanel({
                 depth={0}
                 theme={theme}
                 selected={selected}
+                statusByEntity={statusByEntity}
                 onToggle={toggleNode}
                 onSelect={selectEntity}
               />
@@ -553,6 +604,9 @@ function EntityBrowserPanel({
                 entityType={selectedType}
                 entityId={selected.id}
                 theme={theme}
+                onStatus={(s) =>
+                  setStatusByEntity((prev) => ({ ...prev, [`${selectedType}:${selected.id}`]: s }))
+                }
               />
             )}
 
@@ -637,12 +691,13 @@ function EntityBrowserPanel({
 // Tree Node Component
 // ---------------------------------------------------------------------------
 
-function TreeNodeRow({
+export function TreeNodeRow({
   node,
   path,
   depth,
   theme,
   selected,
+  statusByEntity,
   onToggle,
   onSelect,
 }: {
@@ -651,6 +706,7 @@ function TreeNodeRow({
   depth: number;
   theme: Theme;
   selected: SovdEntity | null;
+  statusByEntity: Record<string, TreeStatus>;
   onToggle: (path: number[]) => void;
   onSelect: (entity: SovdEntity) => void;
 }): ReactElement {
@@ -658,6 +714,15 @@ function TreeNodeRow({
   const isSelected = selected?.id === node.entity.id;
   const hasChildren = node.entity.type !== "app" && node.entity.type !== "function";
   const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : node.entity.type === "function" ? "⚡" : "📦";
+
+  // Readiness lamp for apps/components. Green = ready, red = notReady. No lamp
+  // for unavailable/unknown (e.g. a gateway with no lifecycle provider), and
+  // none for areas/functions which have no lifecycle status.
+  const lampType: LifecycleEntityType | null =
+    node.entity.type === "app" ? "apps" : node.entity.type === "component" ? "components" : null;
+  const lampStatus = lampType != null ? statusByEntity[`${lampType}:${node.entity.id}`] : undefined;
+  const lampColor =
+    lampStatus === "ready" ? c.success : lampStatus === "notReady" ? c.critical : null;
 
   return (
     <>
@@ -687,6 +752,20 @@ function TreeNodeRow({
         )}
         {!hasChildren && <span style={{ width: 18 }} />}
         <span style={{ marginRight: 4 }}>{icon}</span>
+        {lampColor != null && (
+          <span
+            aria-label={`status ${lampStatus}`}
+            title={lampStatus}
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: lampColor,
+              marginRight: 5,
+              flexShrink: 0,
+            }}
+          />
+        )}
         <span style={{ fontSize: 12, fontWeight: isSelected ? 600 : 400, color: c.text }}>
           {node.entity.name}
         </span>
@@ -700,6 +779,7 @@ function TreeNodeRow({
             depth={depth + 1}
             theme={theme}
             selected={selected}
+            statusByEntity={statusByEntity}
             onToggle={onToggle}
             onSelect={onSelect}
           />
