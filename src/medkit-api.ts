@@ -44,6 +44,7 @@ import { convertJsonSchemaToTopicSchema } from "./schema-utils";
 import {
   getEntityData,
   getEntityDataItem,
+  putEntityDataItem,
   getEntityConfigurations,
   putEntityConfiguration,
   deleteEntityConfiguration as dispatchDeleteEntityConfiguration,
@@ -292,6 +293,7 @@ export class MedkitApiClient {
     const items = unwrapItems<DataItem>(data as unknown);
     return items.map((item) => {
       const direction = item["x-medkit"]?.ros2?.direction;
+      const rawSchema = item["x-medkit"]?.type_info?.schema;
       return {
         topic: item.name || item["x-medkit"]?.ros2?.topic || item.id,
         timestamp: Date.now() * 1_000_000,
@@ -300,8 +302,27 @@ export class MedkitApiClient {
         type: item["x-medkit"]?.ros2?.type,
         isPublisher: direction === "publish" || direction === "both",
         isSubscriber: direction === "subscribe" || direction === "both",
+        schema: rawSchema != null ? convertJsonSchemaToTopicSchema(rawSchema) : undefined,
       };
     });
+  }
+
+  /**
+   * Publish a message to a topic via PUT /{entity}/data/{topic}. The gateway
+   * requires the ROS 2 message type ("pkg/msg/Type") and the message body.
+   */
+  async publishTopic(
+    entityType: SovdResourceEntityType,
+    entityId: string,
+    topicName: string,
+    msgType: string,
+    data: unknown,
+  ): Promise<void> {
+    const { error } = await putEntityDataItem(this.client, entityType, entityId, topicName, {
+      type: msgType,
+      data,
+    });
+    if (error) throwApiError(error);
   }
 
   async getTopicData(

@@ -23,6 +23,7 @@ import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { ConfigurationsPanel } from "./ConfigurationsPanel";
 import { EntityStatusControl } from "./EntityStatusControl";
+import { DataPanel } from "./DataPanel";
 import type { LifecycleEntityType } from "./api-dispatch";
 import type {
   SovdEntity,
@@ -664,8 +665,14 @@ function EntityBrowserPanel({
             {tabError && <div style={S.errorBox(theme)}>⚠ {tabError}</div>}
             {tabLoading && <div style={{ color: c.textMuted }}>Loading…</div>}
 
-            {!tabLoading && activeTab === "data" && (
-              <DataTab topics={topics} theme={theme} />
+            {!tabLoading && activeTab === "data" && client != null && (
+              <DataPanel
+                client={client}
+                entityType={selectedType}
+                entityId={selected.id}
+                topics={topics}
+                theme={theme}
+              />
             )}
             {activeTab === "operations" && client != null && (
               <OperationsPanel
@@ -840,37 +847,6 @@ export function TreeNodeRow({
 // ---------------------------------------------------------------------------
 // Tab: Data (topics)
 // ---------------------------------------------------------------------------
-
-function DataTab({ topics, theme }: { topics: ComponentTopic[]; theme: Theme }): ReactElement {
-  const c = S.colors(theme);
-  if (topics.length === 0) return <div style={S.emptyState(theme)}>No data items</div>;
-
-  return (
-    <table style={S.table(theme)}>
-      <thead>
-        <tr>
-          <th style={S.th(theme)}>Topic</th>
-          <th style={S.th(theme)}>Type</th>
-          <th style={S.th(theme)}>Dir</th>
-        </tr>
-      </thead>
-      <tbody>
-        {topics.map((t) => (
-          <tr key={t.topic}>
-            <td style={S.td(theme)}>{t.topic}</td>
-            <td style={{ ...S.td(theme), color: c.textMuted, fontSize: 11 }}>{t.type || "—"}</td>
-            <td style={S.td(theme)}>
-              {t.isPublisher && <span style={S.badge("#fff", c.success)}>pub</span>}
-              {t.isSubscriber && (
-                <span style={{ ...S.badge("#fff", c.info), marginLeft: 2 }}>sub</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Tab: Faults
