@@ -9,9 +9,10 @@ Apps and components now show a lifecycle control in the entity detail (gateway
 
 - Live readiness badge (ready / notReady) fetched from `GET /{entity}/status`.
 - A readiness lamp on each app/component node in the entity tree (green = ready,
-  amber = notReady; none when the gateway has no lifecycle provider). Lamps
-  refresh on a short interval and stay in sync with transitions made from the
-  detail control.
+  amber = notReady, grey = status read failed; none when the gateway has no
+  lifecycle provider). Lamps refresh on a short interval, keep their last-known
+  value across a transient read error, and stay in sync with transitions made
+  from the detail control.
 - Transition actions: start, restart, force-restart, shutdown, force-shutdown.
   Each action is gated on whether the gateway advertises it for the current state
   (so the UI permits exactly what the gateway accepts, and stays disabled while the
