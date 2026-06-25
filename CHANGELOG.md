@@ -8,6 +8,9 @@ Apps and components now show a lifecycle control in the entity detail (gateway
 0.6.0 lifecycle API):
 
 - Live readiness badge (ready / notReady) fetched from `GET /{entity}/status`.
+- A readiness lamp on each app/component node in the entity tree (green = ready,
+  red = notReady; none when the gateway has no lifecycle provider). It stays in
+  sync with transitions made from the detail control.
 - Transition actions: start, restart, force-restart, shutdown, force-shutdown.
   Actions are gated by the current readiness (e.g. Start is disabled when ready),
   and the destructive ones (shutdown / force-shutdown) ask for inline confirmation.

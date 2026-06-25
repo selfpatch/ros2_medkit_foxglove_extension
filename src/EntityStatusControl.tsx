@@ -47,6 +47,9 @@ export interface EntityStatusControlProps {
   entityType: LifecycleEntityType;
   entityId: string;
   theme: Theme;
+  /** Called whenever the resolved status changes, so a parent (e.g. the tree
+   * lamp) can stay in sync after a transition. */
+  onStatus?: (status: DisplayStatus) => void;
 }
 
 export function EntityStatusControl({
@@ -54,6 +57,7 @@ export function EntityStatusControl({
   entityType,
   entityId,
   theme,
+  onStatus,
 }: EntityStatusControlProps): ReactElement {
   const c = S.colors(theme);
 
@@ -74,6 +78,14 @@ export function EntityStatusControl({
       mountedRef.current = false;
     };
   }, []);
+
+  // Notify the parent (tree lamp) whenever the resolved status changes. Via a ref
+  // so a changing callback identity doesn't re-fire this effect.
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+  useEffect(() => {
+    if (status != null) onStatusRef.current?.(status);
+  }, [status]);
 
   const loadStatus = useCallback(() => {
     const key = `${entityType}/${entityId}`;
