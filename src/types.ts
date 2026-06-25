@@ -329,11 +329,16 @@ export interface LogListXMedkit {
 
 /**
  * Log configuration for an entity (GET/PUT .../logs/configuration).
- * Schema: LogConfiguration { max_entries?: number | null, severity_filter?: string | null }
+ *
+ * The OpenAPI schema marks `max_entries` as nullable, but the gateway's cap is a
+ * non-nullable size_t: GET always returns a number, a value of 0 is rejected
+ * (400), and a null in a PUT body is treated as absent and leaves the cap
+ * unchanged (it does NOT clear it). There is no "unlimited" - max_entries is
+ * always a concrete 1..10000 value.
  */
 export interface LogConfiguration {
-  /** When set to a number, must be in range 1-10000. null clears the limit. */
-  max_entries?: number | null;
+  /** Cap on returned entries; must be in range 1-10000. */
+  max_entries?: number;
   severity_filter?: string | null;
 }
 
