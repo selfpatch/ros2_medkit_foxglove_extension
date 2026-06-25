@@ -156,14 +156,16 @@ describe("EntityBrowserTabBar - count=0 hides tab", () => {
     expect(screen.queryByRole("tab", { name: /^configurations/i })).not.toBeInTheDocument();
   });
 
-  it("hides faults tab when prefetch returns 0 faults", async () => {
+  it("still shows the faults tab when prefetch returns 0 faults (not count-gated)", async () => {
+    // Faults arrive live, so the tab is shown whenever the capability is present
+    // (like logs) rather than being gated on the prefetched count.
     const client = makeClient({
       listEntityFaults: vi.fn().mockResolvedValue({ items: [], count: 0 }),
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => expect(client.listEntityFaults).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
   });
 });
 
@@ -416,11 +418,12 @@ describe("EntityBrowserTabBar - parallel prefetch", () => {
     });
     renderTabBar({ client, capabilities: ALL_CAPS, entityId: "e1" });
     await waitFor(() => {
-      // configurations visible (count=1), operations hidden (error treated as 0), faults hidden (count=0)
+      // configurations visible (count=1), operations hidden (error treated as 0).
       expect(screen.getByRole("tab", { name: /^configurations/i })).toBeInTheDocument();
     });
     expect(screen.queryByRole("tab", { name: /^operations/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /^faults/i })).not.toBeInTheDocument();
+    // faults is not count-gated, so it stays visible regardless of the count.
+    expect(screen.getByRole("tab", { name: /^faults/i })).toBeInTheDocument();
   });
 });
 

@@ -91,7 +91,9 @@ export interface ConfigurationDeleteMultiStatus {
 
 /**
  * Derived reset-all counts the panel renders. Computed from
- * {@link ConfigurationDeleteMultiStatus.results}, not read off the wire.
+ * {@link ConfigurationDeleteMultiStatus.results}, not read off the wire. Each
+ * result entry is one backing NODE, so these are node counts (not per-parameter)
+ * - the panel labels them as nodes accordingly.
  */
 export interface ConfigurationResetCounts {
   reset_count: number;
