@@ -10,6 +10,22 @@ import type { LifecycleStatusResponse } from "./types";
 
 const THEME = "dark" as const;
 
+// The gateway advertises acceptable transitions as link fields on the status
+// response; the control gates each button on its link. A ready entity offers
+// restart/shutdown (not start); a notReady one offers start/force-restart.
+const READY: LifecycleStatusResponse = {
+  status: "ready",
+  restart: "/restart",
+  "force-restart": "/force-restart",
+  shutdown: "/shutdown",
+  "force-shutdown": "/force-shutdown",
+};
+const NOT_READY: LifecycleStatusResponse = {
+  status: "notReady",
+  start: "/start",
+  "force-restart": "/force-restart",
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -21,7 +37,7 @@ function makeClient(
   }> = {},
 ): MedkitApiClient {
   return {
-    getEntityStatus: vi.fn().mockResolvedValue({ status: "ready" } as LifecycleStatusResponse),
+    getEntityStatus: vi.fn().mockResolvedValue(READY),
     setEntityStatus: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as MedkitApiClient;
@@ -52,20 +68,35 @@ describe("EntityStatusControl - status display", () => {
 });
 
 describe("EntityStatusControl - action gating", () => {
-  it("disables Start and enables Restart/Shutdown when ready", async () => {
-    renderControl(makeClient({ getEntityStatus: vi.fn().mockResolvedValue({ status: "ready" }) }));
+  it("enables the transitions the gateway advertises (ready: restart/shutdown, not start)", async () => {
+    renderControl(makeClient({ getEntityStatus: vi.fn().mockResolvedValue(READY) }));
     await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
     expect((screen.getByRole("button", { name: "Start app1" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Restart app1" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: "Shutdown app1" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("enables Start and disables Restart/Shutdown when notReady", async () => {
-    renderControl(makeClient({ getEntityStatus: vi.fn().mockResolvedValue({ status: "notReady" }) }));
+  it("enables the transitions the gateway advertises (notReady: start, not restart/shutdown)", async () => {
+    renderControl(makeClient({ getEntityStatus: vi.fn().mockResolvedValue(NOT_READY) }));
     await waitFor(() => expect(screen.getByText("notReady")).toBeInTheDocument());
     expect((screen.getByRole("button", { name: "Start app1" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: "Restart app1" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Shutdown app1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables every transition when the gateway advertises none (fail-safe)", async () => {
+    // status known but no transition links -> nothing actionable.
+    renderControl(makeClient({ getEntityStatus: vi.fn().mockResolvedValue({ status: "ready" }) }));
+    await waitFor(() => expect(screen.getByText("ready")).toBeInTheDocument());
+    for (const name of [
+      "Start app1",
+      "Restart app1",
+      "Force restart app1",
+      "Shutdown app1",
+      "Force shutdown app1",
+    ]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 });
 
@@ -73,7 +104,7 @@ describe("EntityStatusControl - transitions", () => {
   it("dispatches Start immediately without a confirmation", async () => {
     const setEntityStatus = vi.fn().mockResolvedValue(undefined);
     const client = makeClient({
-      getEntityStatus: vi.fn().mockResolvedValue({ status: "notReady" }),
+      getEntityStatus: vi.fn().mockResolvedValue(NOT_READY),
       setEntityStatus,
     });
     renderControl(client);
@@ -85,7 +116,7 @@ describe("EntityStatusControl - transitions", () => {
   it("asks for confirmation before a destructive Shutdown", async () => {
     const setEntityStatus = vi.fn().mockResolvedValue(undefined);
     const client = makeClient({
-      getEntityStatus: vi.fn().mockResolvedValue({ status: "ready" }),
+      getEntityStatus: vi.fn().mockResolvedValue(READY),
       setEntityStatus,
     });
     renderControl(client);
@@ -103,7 +134,7 @@ describe("EntityStatusControl - transitions", () => {
   it("cancels a destructive action without dispatching", async () => {
     const setEntityStatus = vi.fn().mockResolvedValue(undefined);
     const client = makeClient({
-      getEntityStatus: vi.fn().mockResolvedValue({ status: "ready" }),
+      getEntityStatus: vi.fn().mockResolvedValue(READY),
       setEntityStatus,
     });
     renderControl(client);
@@ -115,7 +146,7 @@ describe("EntityStatusControl - transitions", () => {
   });
 
   it("re-fetches status after a successful transition", async () => {
-    const getEntityStatus = vi.fn().mockResolvedValue({ status: "notReady" });
+    const getEntityStatus = vi.fn().mockResolvedValue(NOT_READY);
     const client = makeClient({ getEntityStatus, setEntityStatus: vi.fn().mockResolvedValue(undefined) });
     renderControl(client);
     await waitFor(() => expect(screen.getByText("notReady")).toBeInTheDocument());
@@ -124,12 +155,23 @@ describe("EntityStatusControl - transitions", () => {
     await waitFor(() => expect(getEntityStatus).toHaveBeenCalledTimes(2));
   });
 
+  it("shows the action's label (not its raw id) in a transition error", async () => {
+    // A non-Error rejection hits the fallback message, which should read
+    // "Force restart failed", not "Failed to force-restart".
+    const setEntityStatus = vi.fn().mockRejectedValue("nope");
+    const client = makeClient({ getEntityStatus: vi.fn().mockResolvedValue(NOT_READY), setEntityStatus });
+    renderControl(client);
+    await waitFor(() => expect(screen.getByText("notReady")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Force restart app1" }));
+    expect(await screen.findByText("Force restart failed")).toBeInTheDocument();
+  });
+
   it("disables all actions and notes it when a transition returns 501", async () => {
     const setEntityStatus = vi.fn().mockRejectedValue(
       new MedkitApiError({ status: 501, message: "no provider", code: "x", error_code: "x" }),
     );
     const client = makeClient({
-      getEntityStatus: vi.fn().mockResolvedValue({ status: "notReady" }),
+      getEntityStatus: vi.fn().mockResolvedValue(NOT_READY),
       setEntityStatus,
     });
     renderControl(client);

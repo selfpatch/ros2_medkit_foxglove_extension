@@ -6,14 +6,14 @@
 //
 // The gateway returns 501 until a lifecycle provider is configured; that case
 // surfaces as a disabled "not available" state rather than an error, so the
-// control degrades gracefully on a stock gateway. Destructive transitions
-// (anything that interrupts a running entity) ask for inline confirmation.
+// control degrades gracefully on a stock gateway. Shutdown and force-shutdown
+// ask for inline confirmation before dispatching.
 
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
 import { type MedkitApiClient } from "./medkit-api";
 import { MedkitApiError } from "./gateway-client";
-import type { LifecycleAction, LifecycleStatus } from "./types";
+import type { LifecycleAction, LifecycleStatus, LifecycleStatusResponse } from "./types";
 import type { LifecycleEntityType } from "./api-dispatch";
 import * as S from "./styles";
 import type { Theme } from "./styles";
@@ -36,11 +36,18 @@ const ACTIONS: ActionConfig[] = [
   { action: "force-shutdown", label: "Force shutdown", destructive: true },
 ];
 
-// Transitions that don't make sense for a given readiness value.
-const DISABLED_BY_STATUS: Record<string, ReadonlySet<LifecycleAction>> = {
-  ready: new Set<LifecycleAction>(["start"]),
-  notReady: new Set<LifecycleAction>(["restart", "shutdown", "force-shutdown"]),
-};
+// The gateway advertises the transitions it will accept as link fields on the
+// status response (one URI per action). Gate each button on whether its link is
+// present, so the UI permits exactly what the gateway permits and stays closed
+// (fail-safe) on an unknown/odd status, a status we couldn't read, or a gateway
+// that exposes readiness but no transitions.
+function allowedActionsFromResponse(res: LifecycleStatusResponse): ReadonlySet<LifecycleAction> {
+  const allowed = new Set<LifecycleAction>();
+  for (const { action } of ACTIONS) {
+    if (res[action] != null) allowed.add(action);
+  }
+  return allowed;
+}
 
 export interface EntityStatusControlProps {
   client: MedkitApiClient;
@@ -62,6 +69,9 @@ export function EntityStatusControl({
   const c = S.colors(theme);
 
   const [status, setStatus] = useState<DisplayStatus | null>(null);
+  // Transitions the gateway currently accepts (from the status response links).
+  // Empty until loaded, so every action stays disabled until readiness is known.
+  const [allowedActions, setAllowedActions] = useState<ReadonlySet<LifecycleAction>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<LifecycleAction | null>(null);
@@ -71,7 +81,10 @@ export function EntityStatusControl({
   const [actuationUnsupported, setActuationUnsupported] = useState(false);
 
   const mountedRef = useRef(true);
-  const entityKeyRef = useRef(`${entityType}/${entityId}`);
+  // Monotonic token so only the latest status fetch updates state - guards both
+  // an entity switch and two in-flight reads for the same entity (e.g. the
+  // initial load racing a post-transition refresh).
+  const loadSeqRef = useRef(0);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -88,23 +101,26 @@ export function EntityStatusControl({
   }, [status]);
 
   const loadStatus = useCallback(() => {
-    const key = `${entityType}/${entityId}`;
-    entityKeyRef.current = key;
-    const stale = () => !mountedRef.current || entityKeyRef.current !== key;
+    const seq = ++loadSeqRef.current;
+    const stale = () => !mountedRef.current || loadSeqRef.current !== seq;
     setStatus(null);
+    setAllowedActions(new Set());
     setLoadError(null);
     void client.getEntityStatus(entityType, entityId).then(
       (res) => {
         if (stale()) return;
         if (res === "unavailable") {
           setStatus("unavailable");
+          setAllowedActions(new Set());
         } else {
           setStatus(res.status === "ready" || res.status === "notReady" ? res.status : "unknown");
+          setAllowedActions(allowedActionsFromResponse(res));
         }
       },
       (err: unknown) => {
         if (stale()) return;
         setStatus("unknown");
+        setAllowedActions(new Set());
         setLoadError(err instanceof Error ? err.message : "Failed to load status");
       },
     );
@@ -132,7 +148,8 @@ export function EntityStatusControl({
           setActuationUnsupported(true);
           setActionError("Not implemented by this gateway");
         } else {
-          setActionError(err instanceof Error ? err.message : `Failed to ${action}`);
+          const label = ACTIONS.find((a) => a.action === action)?.label ?? action;
+          setActionError(err instanceof Error ? err.message : `${label} failed`);
         }
       } finally {
         if (mountedRef.current) setPendingAction(null);
@@ -143,8 +160,8 @@ export function EntityStatusControl({
 
   const handleClick = useCallback(
     (cfg: ActionConfig) => {
-      // Start is non-destructive: dispatch immediately. Everything else
-      // interrupts a running entity, so confirm first.
+      // Destructive transitions (shutdown / force-shutdown) confirm first;
+      // the rest dispatch immediately.
       if (cfg.destructive) {
         setConfirmAction(cfg.action);
       } else {
@@ -161,7 +178,7 @@ export function EntityStatusControl({
     actuationUnsupported ||
     pendingAction !== null ||
     confirmAction !== null ||
-    (status != null && (DISABLED_BY_STATUS[status]?.has(action) ?? false));
+    !allowedActions.has(action);
 
   const statusBadge = (() => {
     if (status === "ready") return <span style={S.badge("#fff", c.success)}>ready</span>;

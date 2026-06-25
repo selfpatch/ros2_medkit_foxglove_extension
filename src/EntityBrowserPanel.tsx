@@ -59,6 +59,11 @@ type Tab = "data" | "operations" | "configurations" | "faults" | "logs";
 // lifecycle provider (501); "unknown" = not fetched / fetch failed.
 type TreeStatus = "ready" | "notReady" | "unavailable" | "unknown";
 
+// Tree-lamp polling: cap concurrent status reads (the gateway serializes them on
+// one reader) and refresh on this interval so a crashed node updates its lamp.
+const LAMP_CONCURRENCY = 4;
+const LAMP_POLL_MS = 10_000;
+
 const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", "logs"];
 
 // ---------------------------------------------------------------------------
@@ -380,40 +385,62 @@ function EntityBrowserPanel({
     void doConnect();
   }, [doConnect]);
 
-  // Fetch lifecycle readiness for component/app nodes as they appear in the tree,
-  // to drive the tree lamp. Each entity is queried once per connection (the
-  // in-flight set dedupes); areas/functions have no lifecycle status.
-  useEffect(() => {
+  // Drive the tree readiness lamps. Fetch lifecycle status for every app/
+  // component node with bounded concurrency, so a large tree doesn't fan out N
+  // simultaneous reads that serialize on the gateway's single status reader.
+  // The in-flight set is cleared per-fetch (not per-connection), so a node that
+  // later changes readiness - or whose fetch failed - is retried on the next
+  // poll. Areas and functions have no lifecycle status.
+  const fetchLampStatuses = useCallback(async () => {
     if (!client) return;
-    const entities: SovdEntity[] = [];
+    const targets: { key: string; type: LifecycleEntityType; id: string }[] = [];
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
-        entities.push(n.entity);
+        const t: LifecycleEntityType | null =
+          n.entity.type === "app" ? "apps" : n.entity.type === "component" ? "components" : null;
+        if (t != null) targets.push({ key: `${t}:${n.entity.id}`, type: t, id: n.entity.id });
         if (n.children) walk(n.children);
       }
     };
     walk(tree);
-    for (const e of entities) {
-      const eType: LifecycleEntityType | null =
-        e.type === "app" ? "apps" : e.type === "component" ? "components" : null;
-      if (eType == null) continue;
-      const key = `${eType}:${e.id}`;
-      if (statusInFlightRef.current.has(key)) continue;
-      statusInFlightRef.current.add(key);
-      void client.getEntityStatus(eType, e.id).then(
-        (res) => {
+
+    let idx = 0;
+    const worker = async () => {
+      while (idx < targets.length) {
+        const t = targets[idx++];
+        if (statusInFlightRef.current.has(t.key)) continue; // another tick owns it
+        statusInFlightRef.current.add(t.key);
+        try {
+          const res = await client.getEntityStatus(t.type, t.id);
           const v: TreeStatus =
             res === "unavailable"
               ? "unavailable"
               : res.status === "ready" || res.status === "notReady"
                 ? res.status
                 : "unknown";
-          setStatusByEntity((prev) => ({ ...prev, [key]: v }));
-        },
-        () => setStatusByEntity((prev) => ({ ...prev, [key]: "unknown" })),
-      );
-    }
-  }, [tree, client]);
+          setStatusByEntity((prev) => ({ ...prev, [t.key]: v }));
+        } catch {
+          setStatusByEntity((prev) => ({ ...prev, [t.key]: "unknown" }));
+        } finally {
+          statusInFlightRef.current.delete(t.key);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LAMP_CONCURRENCY, targets.length) }, worker));
+  }, [client, tree]);
+
+  // Fetch immediately when the tree or connection changes (new nodes appear),
+  // then refresh on an interval so a node that crashes (-> notReady) updates.
+  const fetchLampStatusesRef = useRef(fetchLampStatuses);
+  fetchLampStatusesRef.current = fetchLampStatuses;
+  useEffect(() => {
+    void fetchLampStatuses();
+  }, [fetchLampStatuses]);
+  useEffect(() => {
+    if (!client) return;
+    const id = setInterval(() => void fetchLampStatusesRef.current(), LAMP_POLL_MS);
+    return () => clearInterval(id);
+  }, [client]);
 
   // ── Tree expand ─────────────────────────────────────────────────
 
@@ -600,6 +627,9 @@ function EntityBrowserPanel({
                 functions have no lifecycle status). */}
             {client != null && (selectedType === "apps" || selectedType === "components") && (
               <EntityStatusControl
+                // Remount per entity so armed confirmations / pending action
+                // state never carry over to a different app/component.
+                key={`${selectedType}:${selected.id}`}
                 client={client}
                 entityType={selectedType}
                 entityId={selected.id}
@@ -721,8 +751,10 @@ export function TreeNodeRow({
   const lampType: LifecycleEntityType | null =
     node.entity.type === "app" ? "apps" : node.entity.type === "component" ? "components" : null;
   const lampStatus = lampType != null ? statusByEntity[`${lampType}:${node.entity.id}`] : undefined;
+  // notReady uses the same amber as the detail badge (it means "not started",
+  // not a fault), so the tree lamp and the detail control agree.
   const lampColor =
-    lampStatus === "ready" ? c.success : lampStatus === "notReady" ? c.critical : null;
+    lampStatus === "ready" ? c.success : lampStatus === "notReady" ? c.warning : null;
 
   return (
     <>
