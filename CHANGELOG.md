@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Entity lifecycle status control in Entity Browser
+
+Apps and components now show a lifecycle control in the entity detail (gateway
+0.6.0 lifecycle API):
+
+- Live readiness badge (ready / notReady) fetched from `GET /{entity}/status`.
+- Transition actions: start, restart, force-restart, shutdown, force-shutdown.
+  Actions are gated by the current readiness (e.g. Start is disabled when ready),
+  and the destructive ones (shutdown / force-shutdown) ask for inline confirmation.
+- A gateway without a lifecycle provider returns 501; this shows as a disabled
+  "not available" state rather than an error.
+- Areas and functions have no lifecycle status, so the control is not shown for them.
+
 ### Capability-driven resource tabs in Entity Browser
 
 The Entity Browser tab bar shows tabs based on the gateway's reported capabilities:
