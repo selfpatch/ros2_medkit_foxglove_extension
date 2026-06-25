@@ -300,12 +300,19 @@ describe("isBooleanType", () => {
 // =============================================================================
 
 describe("getDefaultValue - structural defaults", () => {
-    it("returns 0 for numeric types", () => {
+    it("returns 0 for numeric types that fit in a JS number", () => {
         const numericTypes = ["int8", "uint8", "int16", "uint16", "int32", "uint32",
-            "int64", "uint64", "float", "float32", "float64", "double", "byte"];
+            "float", "float32", "float64", "double", "byte"];
         for (const t of numericTypes) {
             const schema: SchemaFieldType = { type: t };
             expect(getDefaultValue(schema)).toBe(0);
+        }
+    });
+
+    it("returns the string \"0\" for 64-bit int types (carried as strings)", () => {
+        for (const t of ["int64", "uint64"]) {
+            const schema: SchemaFieldType = { type: t };
+            expect(getDefaultValue(schema)).toBe("0");
         }
     });
 

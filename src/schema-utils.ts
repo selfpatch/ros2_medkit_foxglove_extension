@@ -173,6 +173,17 @@ export function isBooleanType(type: string): boolean {
     return type.toLowerCase() === "bool" || type.toLowerCase() === "boolean";
 }
 
+/**
+ * Returns true for 64-bit integer types whose full range exceeds JS's safe
+ * integer limit (2^53). These are carried as decimal strings end-to-end so a
+ * large value (e.g. a nanosecond timestamp) is not silently rounded by a JS
+ * number; the gateway parses the string back to int64/uint64 losslessly.
+ */
+export function isBigIntType(type: string): boolean {
+    const lower = type.toLowerCase();
+    return lower === "int64" || lower === "uint64";
+}
+
 // =============================================================================
 // Structural defaults
 // (mirrors web_ui schema-utils.ts lines 159-189)
@@ -183,11 +194,13 @@ export function isBooleanType(type: string): boolean {
  * Get the structural default value for a schema field.
  * - array -> []
  * - nested object (fields present) -> recursive object of defaults
- * - numeric -> 0
+ * - int64/uint64 -> "0" (string, to preserve precision beyond 2^53)
+ * - other numeric -> 0
  * - bool -> false
  * - opaque object (type "object", no fields) -> {} (structural empty object)
  * - everything else (string, unknown) -> ""
- * Mirrors web_ui getDefaultValue (schema-utils.ts:159-178).
+ * Mirrors web_ui getDefaultValue (schema-utils.ts:159-178), except 64-bit ints
+ * are carried as strings here (web_ui uses plain numbers).
  */
 export function getDefaultValue(schema: SchemaFieldType): unknown {
     if (schema.type === "array") {
@@ -199,6 +212,10 @@ export function getDefaultValue(schema: SchemaFieldType): unknown {
             obj[key] = getDefaultValue(fieldSchema);
         }
         return obj;
+    }
+    // 64-bit ints are carried as strings to preserve precision beyond 2^53.
+    if (isBigIntType(schema.type)) {
+        return "0";
     }
     if (isNumericType(schema.type)) {
         return 0;

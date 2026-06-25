@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { OperationsPanel } from "./OperationsPanel";
 import type { MedkitApiClient } from "./medkit-api";
+import { MedkitApiError } from "./gateway-client";
 import type { CreateExecutionResponse, Operation } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -52,16 +53,15 @@ const ACTION_OP_WITH_SCHEMA: Operation = {
   },
 };
 
+// Real gateway shapes: a synchronous service returns `{parameters}` only (no
+// status/kind/result), and an async action's 202 returns `{id, status:"running"}`.
 const SERVICE_RESPONSE: CreateExecutionResponse = {
-  status: "completed",
-  kind: "service",
-  result: { success: true, message: "OK" },
+  parameters: { success: true, message: "OK" },
 };
 
 const ACTION_RESPONSE: CreateExecutionResponse = {
   id: "exec-abc-123",
-  status: "accepted",
-  kind: "action",
+  status: "running",
 };
 
 const THEME = "dark" as const;
@@ -415,6 +415,23 @@ describe("OperationsPanel - Run calls createExecution", () => {
     });
   });
 
+  it("omits the type field when the operation type is empty", async () => {
+    // The gateway treats a present body `type` (even "") as an override of the
+    // discovered type, so an empty-type operation must send no `type` key.
+    const noTypeOp: Operation = { name: "act_notype", path: "/act_notype", type: "", kind: "action" };
+    const client = makeClient([noTypeOp], ACTION_RESPONSE);
+    render(
+      <OperationsPanel client={client} entityType="apps" entityId="a1" theme={THEME} />,
+    );
+    await waitFor(() => screen.getByRole("button", { name: noTypeOp.name }));
+    fireEvent.click(screen.getByRole("button", { name: noTypeOp.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${noTypeOp.name}` }));
+
+    await waitFor(() => {
+      expect(client.createExecution).toHaveBeenCalledWith("apps", "a1", "act_notype", { goal: {} });
+    });
+  });
+
   it("disables the Run button while in-flight", async () => {
     let resolveExec!: (v: CreateExecutionResponse) => void;
     const hangingPromise = new Promise<CreateExecutionResponse>((resolve) => {
@@ -550,9 +567,9 @@ describe("OperationsPanel - action response display", () => {
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
     await waitFor(() => {
-      // The async-202 alias "accepted" is shown as "pending" in the lifecycle
-      // panel (the gateway never emits "accepted" on the executions/{id} poll).
-      const statusBadges = screen.getAllByText("pending");
+      // The gateway's 202 carries status:"running"; the lifecycle panel shows it
+      // verbatim (no "accepted" alias remap).
+      const statusBadges = screen.getAllByText("running");
       expect(statusBadges.length).toBeGreaterThanOrEqual(1);
     });
   });
@@ -738,10 +755,10 @@ describe("OperationsPanel - action polling lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
 
     // After run (createExecution resolves), the panel shows the execution id and
-    // the mapped initial status "pending".
+    // the initial status "running" from the 202 response.
     await flushMicrotasks();
     expect(screen.getByText("exec-abc-123")).toBeInTheDocument();
-    expect(screen.getByText("pending")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
     expect(client.getExecution).toHaveBeenCalledTimes(0); // first poll not yet due
 
     // Tick 1: getExecution -> pending
@@ -766,6 +783,50 @@ describe("OperationsPanel - action polling lifecycle", () => {
     await advanceOnePoll();
     await advanceOnePoll();
     expect((client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCountAtTerminal);
+  });
+
+  it("stops polling and surfaces an error when getExecution returns 404 (evicted goal)", async () => {
+    // A goal the gateway has evicted returns a hard 404 on the executions/{id}
+    // poll. The loop must stop, surface the error, and log a terminal entry -
+    // not loop forever leaving Run stuck on "Polling...".
+    const getExecution = vi.fn().mockRejectedValue(
+      new MedkitApiError({
+        status: 404,
+        message: "execution not found",
+        code: "x-medkit-not-found",
+        error_code: "x-medkit-not-found",
+      }),
+    );
+    const client = {
+      listOperations: vi.fn().mockResolvedValue([ACTION_OP]),
+      createExecution: vi.fn().mockResolvedValue(ACTION_RESPONSE),
+      getExecution,
+      cancelExecution: vi.fn(async () => undefined),
+    } as unknown as MedkitApiClient;
+
+    render(
+      <OperationsPanel client={client} entityType="apps" entityId="a1" theme={THEME} />,
+    );
+    await flushMicrotasks();
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+    await flushMicrotasks();
+
+    // Tick 1: the 404 rejection stops the loop terminally.
+    await advanceOnePoll();
+    expect(getExecution).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Execution polling stopped/)).toBeInTheDocument();
+    // A terminal entry is recorded (history toggle shows one entry).
+    expect(screen.getByText(/History \(1\)/)).toBeInTheDocument();
+    // Run is re-enabled, not frozen on "Polling...".
+    expect(
+      (screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    // No further polls after the terminal 404.
+    await advanceOnePoll();
+    await advanceOnePoll();
+    expect(getExecution).toHaveBeenCalledTimes(1);
   });
 
   it("adds history entry when execution reaches terminal status", async () => {
@@ -897,6 +958,42 @@ describe("OperationsPanel - action cancel", () => {
     await advanceOnePoll();
     const callsAfterCancel = (client.getExecution as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(callsAfterCancel).toBe(callsBeforeCancel);
+  });
+
+  it("does not mark the execution canceled when the cancel DELETE fails", async () => {
+    const getExecution = vi.fn(async () => ({
+      status: "running" as const,
+      parameters: undefined,
+      ros2_status: null,
+    }));
+    const cancelExecution = vi.fn().mockRejectedValue(new Error("cancel failed: 500"));
+    const client = {
+      listOperations: vi.fn().mockResolvedValue([ACTION_OP]),
+      createExecution: vi.fn().mockResolvedValue(ACTION_RESPONSE),
+      getExecution,
+      cancelExecution,
+    } as unknown as MedkitApiClient;
+
+    render(
+      <OperationsPanel client={client} entityType="apps" entityId="a1" theme={THEME} />,
+    );
+    await flushMicrotasks();
+    fireEvent.click(screen.getByRole("button", { name: ACTION_OP.name }));
+    fireEvent.click(screen.getByRole("button", { name: `Run ${ACTION_OP.name}` }));
+    await flushMicrotasks();
+
+    await advanceOnePoll();
+    expect(screen.getByRole("button", { name: "Cancel execution" })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel execution" }));
+      await flushMicrotasksRaw();
+    });
+    expect(cancelExecution).toHaveBeenCalledTimes(1);
+    // The DELETE failed, so the execution is NOT canceled: no canceled badge,
+    // and the failure is surfaced instead.
+    expect(screen.queryByText("canceled")).not.toBeInTheDocument();
+    expect(screen.getByText(/cancel failed/i)).toBeInTheDocument();
   });
 });
 

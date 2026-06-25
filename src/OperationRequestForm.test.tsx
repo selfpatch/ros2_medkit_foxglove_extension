@@ -122,6 +122,27 @@ describe("OperationRequestForm - numeric field (intermediate typing)", () => {
         fireEvent.change(input, { target: { value: "abc" } });
         expect(onChange).not.toHaveBeenCalled();
     });
+
+    it("carries int64 values as a string to preserve precision beyond 2^53", () => {
+        // A nanosecond-scale timestamp exceeds Number.MAX_SAFE_INTEGER; parseInt
+        // would round it. The field must emit the exact decimal string instead.
+        const big = "9223372036854775807"; // INT64_MAX
+        const onChange = renderForm({ stamp: { type: "int64" } }, { stamp: "0" });
+        const input = screen.getByRole("textbox", { name: "stamp" });
+        fireEvent.change(input, { target: { value: big } });
+        expect(onChange).toHaveBeenCalledWith({ stamp: big });
+        // Guard against a silent number round-trip losing precision.
+        expect(String(Number(big))).not.toBe(big);
+    });
+
+    it("rejects non-integer input for a uint64 field", () => {
+        const onChange = renderForm({ id: { type: "uint64" } }, { id: "0" });
+        const input = screen.getByRole("textbox", { name: "id" });
+        fireEvent.change(input, { target: { value: "-5" } }); // negative -> rejected for unsigned
+        expect(onChange).not.toHaveBeenCalled();
+        fireEvent.change(input, { target: { value: "1.5" } }); // non-integer -> rejected
+        expect(onChange).not.toHaveBeenCalled();
+    });
 });
 
 // =============================================================================
