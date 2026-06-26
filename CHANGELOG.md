@@ -38,12 +38,16 @@ Apps and components now show a lifecycle control in the entity detail (gateway
   value across a transient read error, and stay in sync with transitions made
   from the detail control.
 - Transition actions: start, restart, force-restart, shutdown, force-shutdown.
-  Each action is gated on whether the gateway advertises it for the current state
-  (so the UI permits exactly what the gateway accepts, and stays disabled while the
-  status is unknown), and the destructive ones (shutdown / force-shutdown) ask for
-  inline confirmation.
-- A gateway without a lifecycle provider returns 501; this shows as a disabled
-  "not available" state rather than an error.
+  Each action is gated on the reported readiness (an already-running entity can't
+  Start; a stopped one can't Restart/Shutdown). Disabled buttons are greyed with a
+  tooltip explaining why, and every transition except Start asks for confirmation
+  before dispatch.
+- Each transition reports its result via a short-lived in-panel toast. A gateway
+  with a status provider but no actuation provider answers transitions with 501;
+  that warns and greys out all transitions with a "not implemented" note instead
+  of failing silently.
+- A gateway without any lifecycle provider returns 501 on the status read; this
+  shows as a disabled "not available" state rather than an error.
 - Areas and functions have no lifecycle status, so the control is not shown for them.
 
 ### Capability-driven resource tabs in Entity Browser

@@ -91,7 +91,11 @@ export function badge(color: string, bg: string): CSSProperties {
   };
 }
 
-export function btn(theme: Theme, variant: "primary" | "ghost" | "danger" = "primary"): CSSProperties {
+export function btn(
+  theme: Theme,
+  variant: "primary" | "ghost" | "danger" = "primary",
+  disabled = false,
+): CSSProperties {
   const c = colors(theme);
   const base: CSSProperties = {
     border: "none",
@@ -99,7 +103,11 @@ export function btn(theme: Theme, variant: "primary" | "ghost" | "danger" = "pri
     padding: "4px 10px",
     fontSize: 12,
     fontWeight: 500,
-    cursor: "pointer",
+    // A disabled button must look disabled: the HTML `disabled` attribute blocks
+    // clicks but does not change the appearance of a custom-styled button, so
+    // grey it out and switch the cursor here.
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.45 : 1,
     display: "inline-flex",
     alignItems: "center",
     gap: 4,
