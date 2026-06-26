@@ -65,11 +65,16 @@ describe("EntityStatusControl - status display", () => {
     expect(start).toHaveAttribute("title", "No lifecycle provider configured");
   });
 
-  it("surfaces a status read error and keeps the badge unknown", async () => {
+  it("surfaces a status read error and fails closed (all transitions disabled)", async () => {
     const client = makeClient({ getEntityStatus: vi.fn().mockRejectedValue(new Error("boom")) });
     renderControl(client);
     await waitFor(() => expect(screen.getByText("unknown")).toBeInTheDocument());
     expect(screen.getByText(/Could not load status: boom/)).toBeInTheDocument();
+    // Readiness is unknown, so no transition (including destructive ones) is allowed.
+    for (const name of ALL_BUTTONS) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    expect(screen.getByRole("button", { name: "Shutdown app1" })).toHaveAttribute("title", "Status unknown");
   });
 });
 
