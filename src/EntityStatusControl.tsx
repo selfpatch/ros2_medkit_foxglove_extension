@@ -189,18 +189,26 @@ export function EntityStatusControl({
   );
 
   const notAvailable = status === "unavailable";
+  // Readiness gating only makes sense once the status is a known value. While
+  // loading (null) or after a failed/unrecognized read ("unknown") we fail
+  // closed - a destructive transition must never fire on an entity whose
+  // readiness we couldn't determine.
+  const statusKnown = status === "ready" || status === "notReady";
 
   const isDisabled = (action: LifecycleAction): boolean =>
     notAvailable ||
     actuationUnsupported ||
     pendingAction !== null ||
     confirmAction !== null ||
+    !statusKnown ||
     (DISABLED_BY_STATUS[status ?? ""]?.has(action) ?? false);
 
   // Why a button is disabled, for the title tooltip.
   const disabledReason = (action: LifecycleAction): string => {
     if (notAvailable) return "No lifecycle provider configured";
     if (actuationUnsupported) return "Not implemented by this gateway";
+    if (status === null) return "Loading status";
+    if (status === "unknown") return "Status unknown";
     if (status === "ready" && action === "start") return "Already running";
     if (status === "notReady" && (DISABLED_BY_STATUS.notReady?.has(action) ?? false)) {
       return "Entity is not running";
