@@ -2,17 +2,19 @@
 
 ![ros2_medkit diagnostics panels in Foxglove: Server Info, Faults Dashboard, Entity Browser and Fault Management side by side](docs/medkit_foxglove.png)
 
-[Foxglove](https://foxglove.dev/) panels for live diagnostics of a ROS 2 system
-through the [ros2_medkit gateway](https://github.com/selfpatch/ros2_medkit) - a
-SOVD-aligned HTTP/REST + SSE API over the ROS 2 graph. Without leaving Foxglove
-you can:
+[Foxglove](https://foxglove.dev/) panels for the
+[ros2_medkit](https://github.com/selfpatch/ros2_medkit) diagnosis layer - the
+SOVD-aligned REST + SSE gateway that turns a ROS 2 failure into a structured
+fault. Foxglove already shows you the *data*; these panels put the *diagnostics*
+right next to it, so you don't have to curl the API or run a separate web UI.
+Without leaving Foxglove you can:
 
-- Browse the entity tree (areas -> components -> apps) and inspect each entity's
-  data, operations, configurations, logs and faults.
+- Browse the SOVD entity tree (areas -> components -> apps) and inspect each
+  entity's data, operations, configurations, logs and faults.
 - Read and publish topics, run service and action operations, and edit ROS 2
   parameters.
-- Watch faults stream in live and control entity lifecycle (start / restart /
-  shutdown).
+- Watch structured faults stream in live (code, severity, source, lifecycle) and
+  control entity lifecycle (start / restart / shutdown).
 - Inspect the gateway itself - version, capabilities and API entry points.
 
 The panels talk to the gateway over REST and SSE. Set the gateway URL (default
@@ -138,7 +140,10 @@ each call to the correct typed per-entity-type path.
 ## Compatibility
 
 - Foxglove Studio ≥ 2.x
-- ros2\_medkit gateway ≥ 0.2.0
+- ros2\_medkit gateway 0.6.0+ for the lifecycle control and topic publishing
+  (they use the gateway's 0.6.0 `/status` and `PUT /data` endpoints). The other
+  panels and tabs follow the gateway's reported capabilities, so older gateways
+  still work for browsing, data, operations, configurations, logs and faults.
 - Supports both dark and light Foxglove themes
 
 ## Development
@@ -163,6 +168,11 @@ Releases are automated via GitHub Actions. To publish a new version:
 CI will validate that the tag matches `package.json`, build the `.foxe`, and create a GitHub Release with:
 - The `.foxe` file as a downloadable asset
 - `sha256sum` and download URL ready for the [Foxglove extension registry](https://github.com/foxglove/extension-registry) PR
+
+## Documentation & community
+
+- 📖 [ros2_medkit docs](https://selfpatch.github.io/ros2_medkit/) · 🧰 [ros2_medkit gateway](https://github.com/selfpatch/ros2_medkit)
+- 💬 [Discord](https://discord.gg/6CXPMApAyq) · 🐛 [Issues](https://github.com/selfpatch/ros2_medkit_foxglove_extension/issues)
 
 ## License
 
