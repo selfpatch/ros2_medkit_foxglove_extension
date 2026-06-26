@@ -1,5 +1,12 @@
 # ros2_medkit Diagnostics - Foxglove Extension
 
+[![CI](https://github.com/selfpatch/ros2_medkit_foxglove_extension/actions/workflows/ci.yml/badge.svg)](https://github.com/selfpatch/ros2_medkit_foxglove_extension/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Foxglove](https://img.shields.io/badge/Foxglove-extension-blue)](https://foxglove.dev/)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289DA?logo=discord&logoColor=white)](https://discord.gg/6CXPMApAyq)
+
+**The [ros2_medkit](https://github.com/selfpatch/ros2_medkit) diagnosis layer, inside Foxglove.**
+
 ![ros2_medkit diagnostics panels in Foxglove: Server Info, Faults Dashboard, Entity Browser and Fault Management side by side](docs/medkit_foxglove.png)
 
 [Foxglove](https://foxglove.dev/) panels for the
