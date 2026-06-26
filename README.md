@@ -1,6 +1,17 @@
 # ros2_medkit Diagnostics - Foxglove Extension
 
-Foxglove Studio panels for browsing and interacting with the **ros2\_medkit gateway** HTTP API.
+Foxglove Studio panels for live diagnostics of a ROS 2 system through the
+**ros2\_medkit gateway** - a SOVD-aligned HTTP/REST + SSE API over the ROS 2
+graph. Without leaving Foxglove, you can browse the entity tree (areas ->
+components -> apps), read and publish topics, run service and action operations,
+edit parameters, watch faults stream in live, control entity lifecycle, and
+inspect the gateway itself.
+
+![ros2_medkit diagnostics panels in Foxglove: Server Info, Faults Dashboard, Entity Browser and Fault Management side by side](docs/medkit_foxglove.png)
+
+The panels talk to a running gateway over REST and SSE. Set the gateway URL
+(default `http://localhost:8080`) once in any panel's settings; it is shared
+across all panels in the extension.
 
 ## Panels
 
