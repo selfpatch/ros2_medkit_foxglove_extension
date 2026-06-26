@@ -1,30 +1,69 @@
 # ros2_medkit Diagnostics - Foxglove Extension
 
-Foxglove Studio panels for live diagnostics of a ROS 2 system through the
-**ros2\_medkit gateway** - a SOVD-aligned HTTP/REST + SSE API over the ROS 2
-graph. Without leaving Foxglove, you can browse the entity tree (areas ->
-components -> apps), read and publish topics, run service and action operations,
-edit parameters, watch faults stream in live, control entity lifecycle, and
-inspect the gateway itself.
-
 ![ros2_medkit diagnostics panels in Foxglove: Server Info, Faults Dashboard, Entity Browser and Fault Management side by side](docs/medkit_foxglove.png)
 
-The panels talk to a running gateway over REST and SSE. Set the gateway URL
-(default `http://localhost:8080`) once in any panel's settings; it is shared
-across all panels in the extension.
+[Foxglove](https://foxglove.dev/) panels for live diagnostics of a ROS 2 system
+through the [ros2_medkit gateway](https://github.com/selfpatch/ros2_medkit) - a
+SOVD-aligned HTTP/REST + SSE API over the ROS 2 graph. Without leaving Foxglove
+you can:
+
+- Browse the entity tree (areas -> components -> apps) and inspect each entity's
+  data, operations, configurations, logs and faults.
+- Read and publish topics, run service and action operations, and edit ROS 2
+  parameters.
+- Watch faults stream in live and control entity lifecycle (start / restart /
+  shutdown).
+- Inspect the gateway itself - version, capabilities and API entry points.
+
+The panels talk to the gateway over REST and SSE. Set the gateway URL (default
+`http://localhost:8080`) once in any panel's settings; it is shared across all
+panels.
 
 ## Panels
 
-| Panel | Description |
-|-------|-------------|
-| **ros2_medkit Entity Browser** | Tree view of areas -> components -> apps. Select an entity to see its resource tabs (capability-driven: a tab is shown whenever the gateway supports the capability, each with a count badge). Apps and components also show a lifecycle status control (live ready/notReady, a readiness lamp on the tree node, plus start / restart / shutdown transitions gated by the reported readiness, with disabled buttons greyed and explained, confirmation for every transition except Start, and a toast on each result). The Data tab can read a topic's current value and publish a message to a topic (a schema-driven form when the gateway exposes the topic schema, otherwise a raw JSON editor). The Operations tab builds a request/goal form from the operation schema, runs service or action operations, and for actions polls execution status with progress, cancel, and per-operation history. The Configurations tab provides type-aware editors for each ROS 2 parameter (bool toggle, int/double numeric input, string field, JSON for array types), plus a per-parameter Reset and a Reset-all button; parameters the gateway marks read-only are shown locked with no editor. The Logs tab queries entity logs with a severity filter and context search; rows are expandable to show the source location (file:line) and full timestamp; an aggregation header appears for function/area-level log aggregation; optional auto-refresh pauses automatically when the panel is not visible; a clear "no LogManager configured" state is shown when the gateway has no LogManager. |
-| **ros2_medkit Faults Dashboard** | Real-time monitoring of all system faults with severity summary cards, SSE live streaming, severity filtering, and fault clearing. |
-| **ros2_medkit Updates** | SOVD `/updates` package catalog. Register packages (with client-side validation) and run Prepare, Execute, Prepare & execute, or Delete with live status polling and per-update progress. Delete, Execute, and Prepare & execute require confirmation; Prepare/Execute/Prepare & execute are disabled on completed/failed updates. Shows a clear banner when the gateway has no UpdateProvider (HTTP 501). |
-| **ros2_medkit Server Info** | Gateway overview: server version, supported capabilities, and API entry points. |
+### ros2_medkit Entity Browser
+
+A tree of areas -> components -> apps. Selecting an entity opens its resource
+tabs, shown only for the capabilities the gateway reports (each with a count
+badge):
+
+- **Data** - read a topic's latest value, or publish a message to it (a
+  schema-driven form when the gateway exposes the topic schema, otherwise a raw
+  JSON editor).
+- **Operations** - build a request/goal form from the operation schema, run
+  service or action operations, and for actions poll execution status with
+  progress, cancel and per-operation history.
+- **Configurations** - type-aware editors per ROS 2 parameter (bool toggle,
+  int/double inputs, string field, JSON for arrays), with per-parameter Reset
+  and a Reset-all; parameters the gateway marks read-only are locked.
+- **Logs** - query entity logs with a severity filter and context search;
+  expandable rows show the source location (file:line) and full timestamp;
+  optional auto-refresh pauses while the panel is hidden.
+
+Apps and components also get a **lifecycle control**: a readiness badge plus a
+lamp on the tree node, and start / restart / shutdown transitions gated by the
+reported readiness. Disabled buttons are greyed and explained, every transition
+except Start confirms first, and each result is reported with a toast.
+
+### ros2_medkit Faults Dashboard
+
+Real-time monitoring of all system faults: severity summary cards, SSE live
+streaming, severity filtering, and fault clearing.
+
+### ros2_medkit Updates
+
+The SOVD `/updates` package catalog. Register packages (with client-side
+validation) and run Prepare, Execute, Prepare & execute or Delete with live
+status polling and per-update progress. Destructive actions confirm first, and a
+clear banner is shown when the gateway has no UpdateProvider (HTTP 501).
+
+### ros2_medkit Server Info
+
+Gateway overview: server version, supported capabilities, and API entry points.
 
 ## Prerequisites
 
-- A running **ros2\_medkit gateway** (default at `http://localhost:8080/api/v1`)
+- A running [ros2_medkit gateway](https://github.com/selfpatch/ros2_medkit) (default at `http://localhost:8080/api/v1`)
 - [Foxglove Studio](https://foxglove.dev/) (desktop app or web)
 
 ## Quick Start
