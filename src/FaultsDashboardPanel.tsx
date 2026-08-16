@@ -337,9 +337,12 @@ function FaultsDashboardPanel({
               setDetailLoading(false);
             }
           }}
-          onDownload={(uri: string, code: string) => {
+          onDownload={(uri: string) => {
             if (!client) return;
-            setDownloading(code);
+            // Keyed by the URI, not the fault code: a fault can hold several
+            // recordings, and keying by code put every one of their buttons
+            // into the spinner on a single click.
+            setDownloading(uri);
             try {
               const url = client.getBulkDataDownloadUrl(uri);
               window.open(url, "_blank");
@@ -396,7 +399,9 @@ function FaultCard({
   detailLoading: boolean;
   downloading: string | null;
   onExpand: (faultCode: string, entityId: string, entityType: string) => void;
-  onDownload: (uri: string, faultCode: string) => void;
+  // The URI identifies the recording; the fault code no longer does, because a
+  // fault can hold several.
+  onDownload: (uri: string) => void;
 }): ReactElement {
   const c = S.colors(theme);
   const f = fault;
@@ -466,13 +471,20 @@ function FaultCard({
                         <span style={{ fontSize: 11, color: c.textMuted }}>
                           {formatBytes(snap.size_bytes)} · {formatDuration(snap.duration_sec)}
                         </span>
+                        {/* The recording's own name. A fault that came back
+                            several times renders one row per occurrence, and
+                            without this they are identical on screen. */}
+                        <span style={{ fontSize: 10, color: c.textMuted, fontFamily: "monospace" }}>
+                          {snap.name}
+                        </span>
                         <span style={{ flex: 1 }} />
                         <button
                           style={S.btn(theme)}
-                          onClick={() => onDownload(snap.bulk_data_uri, f.code)}
-                          disabled={downloading === f.code}
+                          onClick={() => onDownload(snap.bulk_data_uri)}
+                          disabled={downloading === snap.bulk_data_uri}
+                          title={snap.name}
                         >
-                          {downloading === f.code ? "⏳" : "⬇"} Download
+                          {downloading === snap.bulk_data_uri ? "⏳" : "⬇"} Download
                         </button>
                       </div>
                     </div>

@@ -244,7 +244,8 @@ export interface RosbagSnapshot extends SnapshotBase {
   format: "mcap" | "sqlite3" | "db3";
   "x-medkit"?: {
     captured_at: string;
-    fault_code: string;
+    /** Every fault this recording covers; a burst of correlated faults shares one bag. */
+    fault_codes?: string[];
   };
 }
 

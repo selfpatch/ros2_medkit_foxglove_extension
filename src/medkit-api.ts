@@ -652,9 +652,18 @@ export class MedkitApiClient {
    * Build download URL for a bulk data URI (as returned in snapshot bulk_data_uri).
    */
   getBulkDataDownloadUrl(bulkDataUri: string): string {
-    // bulkDataUri is an absolute path like "/apps/motor/bulk-data/rosbags/FAULT_CODE".
+    // bulkDataUri is an absolute path like
+    // "/apps/motor/bulk-data/rosbags/fault_MOTOR_OVERHEAT_1738664999000".
     // Strip the leading slash and join onto the same resolved base the typed
     // client uses, so the download root always matches the API request root.
+    //
+    // Guarded rather than dereferenced straight away: a snapshot whose URI the
+    // gateway could not build arrives with the field absent, and `undefined`
+    // reaching `.replace` throws out of a click handler, taking the panel with
+    // it instead of doing nothing.
+    if (!bulkDataUri) {
+      throw new Error("rosbag snapshot has no bulk_data_uri to download");
+    }
     return `${this.resolvedBase}/${bulkDataUri.replace(/^\//, "")}`;
   }
 

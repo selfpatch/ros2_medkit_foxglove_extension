@@ -889,9 +889,11 @@ function FaultsTab({
   );
 
   const handleDownload = useCallback(
-    (bulkDataUri: string, faultCode: string) => {
+    (bulkDataUri: string) => {
       if (!client) return;
-      setDownloading(faultCode);
+      // Keyed by the URI, not the fault code: several recordings per fault means
+      // keying by code disables every sibling's button on one click.
+      setDownloading(bulkDataUri);
       try {
         const url = client.getBulkDataDownloadUrl(bulkDataUri);
         // Open in new tab/trigger browser download
@@ -994,7 +996,9 @@ function formatDuration(seconds: number): string {
   return `${m}m ${s}s`;
 }
 
-function SnapshotList({
+// Exported for tests, the same way EntityBrowserTabBar is: rendering the whole
+// panel to reach one list would drag in discovery, tabs and a client.
+export function SnapshotList({
   snapshots,
   environmentData,
   theme,
@@ -1005,7 +1009,9 @@ function SnapshotList({
   snapshots: Snapshot[];
   environmentData?: { extended_data_records?: { first_occurrence?: string; last_occurrence?: string } };
   theme: Theme;
-  onDownload: (uri: string, faultCode: string) => void;
+  // The URI identifies the recording; the fault code no longer does, because a
+  // fault can hold several.
+  onDownload: (uri: string) => void;
   downloading: string | null;
   faultCode: string;
 }): ReactElement {
@@ -1046,13 +1052,17 @@ function SnapshotList({
                 <span style={{ fontSize: 14 }}>📦</span>
                 <strong style={{ fontSize: 12 }}>Rosbag Recording</strong>
                 <span style={S.badge("#fff", c.accent)}>{snap.format}</span>
+                {/* One row per occurrence once a fault keeps a history; the
+                    recording name is what tells them apart. */}
+                <span style={{ fontSize: 10, color: c.textMuted, fontFamily: "monospace" }}>{snap.name}</span>
                 <span style={{ flex: 1 }} />
                 <button
                   style={S.btn(theme)}
-                  onClick={() => onDownload(snap.bulk_data_uri, faultCode)}
-                  disabled={downloading === faultCode}
+                  onClick={() => onDownload(snap.bulk_data_uri)}
+                  disabled={downloading === snap.bulk_data_uri}
+                  title={snap.name}
                 >
-                  {downloading === faultCode ? "⏳" : "⬇"} Download
+                  {downloading === snap.bulk_data_uri ? "⏳" : "⬇"} Download
                 </button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 12px", fontSize: 11 }}>
