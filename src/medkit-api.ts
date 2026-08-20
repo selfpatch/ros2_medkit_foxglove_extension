@@ -37,7 +37,12 @@ import type {
 
 export type { OperationExecution };
 
-import { createGatewayClient, MedkitApiError, isMedkitError, normalizeBaseUrl } from "./gateway-client";
+import {
+  createGatewayClient,
+  MedkitApiError,
+  isMedkitError,
+  normalizeBaseUrl,
+} from "./gateway-client";
 import type { MedkitClient } from "./gateway-client";
 import { joinConnection } from "./shared-connection";
 import { convertJsonSchemaToTopicSchema } from "./schema-utils";
@@ -74,9 +79,11 @@ import type { EntityLogsParams, LifecycleEntityType } from "./api-dispatch";
 /** Wrap an openapi-fetch error value (GenericError schema or MedkitError at runtime) into a thrown Error. */
 function throwApiError(error: unknown): never {
   if (isMedkitError(error)) throw new MedkitApiError(error);
-  throw new Error(typeof error === "object" && error !== null && "message" in error
-    ? String((error as { message: unknown }).message)
-    : String(error));
+  throw new Error(
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error),
+  );
 }
 
 /** Extract the array from a gateway collection response.
@@ -91,12 +98,9 @@ function unwrapItems<T>(response: unknown): T[] {
   return w.items ?? [];
 }
 
-const GATEWAY_EXECUTION_STATUSES: ReadonlySet<GatewayExecutionStatus> = new Set([
-  "pending",
-  "running",
-  "completed",
-  "failed",
-]);
+const GATEWAY_EXECUTION_STATUSES: ReadonlySet<GatewayExecutionStatus> = new Set(
+  ["pending", "running", "completed", "failed"],
+);
 
 /**
  * Narrow an untrusted wire status string to a known gateway execution status.
@@ -143,7 +147,10 @@ export class MedkitApiClient {
     // Bulk-data download URLs are built from this same value so they cannot
     // diverge from the client's request root for a non-default basePath.
     this.resolvedBase = normalizeBaseUrl(joinConnection(conn));
-    this.client = createGatewayClient(conn, fetchImpl ? { fetch: fetchImpl } : undefined);
+    this.client = createGatewayClient(
+      conn,
+      fetchImpl ? { fetch: fetchImpl } : undefined,
+    );
   }
 
   // ── Health ────────────────────────────────────────────────────────
@@ -160,7 +167,10 @@ export class MedkitApiClient {
   }
 
   async getRoot(signal?: AbortSignal): Promise<RootOverview> {
-    const { data, error } = await this.client.GET("/", signal ? { signal } : undefined);
+    const { data, error } = await this.client.GET(
+      "/",
+      signal ? { signal } : undefined,
+    );
     if (error) throwApiError(error);
     // The schema's GET / 200 body is structurally RootOverview already; a
     // single cast aligns the generated component type with the local one.
@@ -199,28 +209,40 @@ export class MedkitApiClient {
   async listComponents(): Promise<SovdEntity[]> {
     const { data, error } = await this.client.GET("/components");
     if (error) throwApiError(error);
-    const items = unwrapItems<{ id?: unknown; name?: string; description?: string }>(data as unknown);
-    return items
-      // Drop items without a string id, otherwise id:undefined produces a
-      // bogus "/components/undefined" request when the node is expanded.
-      .filter((c): c is { id: string; name?: string; description?: string } => typeof c.id === "string")
-      .map((c) => ({
-        id: c.id,
-        // The host Component often comes back with name == id (a
-        // hostname-derived hash like 'e9e6f682e4bf'). Use the description as
-        // a friendlier label when present, else fall back to the id - the
-        // list response is not guaranteed to carry a description.
-        name: c.name && c.name !== c.id ? c.name : c.description || c.id,
-        type: "component",
-        href: `/components/${c.id}`,
-        hasChildren: true,
-      }));
+    const items = unwrapItems<{
+      id?: unknown;
+      name?: string;
+      description?: string;
+    }>(data as unknown);
+    return (
+      items
+        // Drop items without a string id, otherwise id:undefined produces a
+        // bogus "/components/undefined" request when the node is expanded.
+        .filter(
+          (c): c is { id: string; name?: string; description?: string } =>
+            typeof c.id === "string",
+        )
+        .map((c) => ({
+          id: c.id,
+          // The host Component often comes back with name == id (a
+          // hostname-derived hash like 'e9e6f682e4bf'). Use the description as
+          // a friendlier label when present, else fall back to the id - the
+          // list response is not guaranteed to carry a description.
+          name: c.name && c.name !== c.id ? c.name : c.description || c.id,
+          type: "component",
+          href: `/components/${c.id}`,
+          hasChildren: true,
+        }))
+    );
   }
 
   async listAreaComponents(areaId: string): Promise<SovdEntity[]> {
-    const { data, error } = await this.client.GET("/areas/{area_id}/components", {
-      params: { path: { area_id: areaId } },
-    });
+    const { data, error } = await this.client.GET(
+      "/areas/{area_id}/components",
+      {
+        params: { path: { area_id: areaId } },
+      },
+    );
     if (error) throwApiError(error);
     const items = unwrapItems<{ id: string; fqn?: string }>(data as unknown);
     return items.map((c) => ({
@@ -239,9 +261,12 @@ export class MedkitApiClient {
       href?: string;
       "x-medkit"?: { ros2?: { node?: string }; component_id?: string };
     }
-    const { data, error } = await this.client.GET("/components/{component_id}/hosts", {
-      params: { path: { component_id: componentId } },
-    });
+    const { data, error } = await this.client.GET(
+      "/components/{component_id}/hosts",
+      {
+        params: { path: { component_id: componentId } },
+      },
+    );
     if (error) throwApiError(error);
     const items = unwrapItems<ApiApp>(data as unknown);
     return items.map((item) => {
@@ -253,7 +278,8 @@ export class MedkitApiClient {
         type: "app",
         href: item.href || `/api/v1/apps/${item.id}`,
         hasChildren: false,
-        node_name: lastSlash >= 0 ? nodePath.substring(lastSlash + 1) : item.name,
+        node_name:
+          lastSlash >= 0 ? nodePath.substring(lastSlash + 1) : item.name,
         namespace: lastSlash > 0 ? nodePath.substring(0, lastSlash) : "/",
         fqn: nodePath,
         component_id: componentId,
@@ -264,7 +290,11 @@ export class MedkitApiClient {
   async listFunctions(): Promise<SovdEntity[]> {
     const { data, error } = await this.client.GET("/functions");
     if (error) throwApiError(error);
-    const items = unwrapItems<{ id: string; name: string; description?: string }>(data as unknown);
+    const items = unwrapItems<{
+      id: string;
+      name: string;
+      description?: string;
+    }>(data as unknown);
     return items.map((f) => ({
       id: f.id,
       name: f.name || f.id,
@@ -288,7 +318,11 @@ export class MedkitApiClient {
         type_info?: { schema?: unknown };
       };
     }
-    const { data, error } = await getEntityData(this.client, entityType, entityId);
+    const { data, error } = await getEntityData(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
     const items = unwrapItems<DataItem>(data as unknown);
     return items.map((item) => {
@@ -302,7 +336,10 @@ export class MedkitApiClient {
         type: item["x-medkit"]?.ros2?.type,
         isPublisher: direction === "publish" || direction === "both",
         isSubscriber: direction === "subscribe" || direction === "both",
-        schema: rawSchema != null ? convertJsonSchemaToTopicSchema(rawSchema) : undefined,
+        schema:
+          rawSchema != null
+            ? convertJsonSchemaToTopicSchema(rawSchema)
+            : undefined,
       };
     });
   }
@@ -318,10 +355,16 @@ export class MedkitApiClient {
     msgType: string,
     data: unknown,
   ): Promise<void> {
-    const { error } = await putEntityDataItem(this.client, entityType, entityId, topicName, {
-      type: msgType,
-      data,
-    });
+    const { error } = await putEntityDataItem(
+      this.client,
+      entityType,
+      entityId,
+      topicName,
+      {
+        type: msgType,
+        data,
+      },
+    );
     if (error) throwApiError(error);
   }
 
@@ -341,7 +384,12 @@ export class MedkitApiClient {
         subscriber_count?: number;
       };
     }
-    const { data, error } = await getEntityDataItem(this.client, entityType, entityId, topicName);
+    const { data, error } = await getEntityDataItem(
+      this.client,
+      entityType,
+      entityId,
+      topicName,
+    );
     if (error) throwApiError(error);
     const item = data as unknown as Resp;
     const r = item["x-medkit"]?.ros2;
@@ -364,7 +412,11 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<ComponentConfigurations> {
-    const { data, error } = await getEntityConfigurations(this.client, entityType, entityId);
+    const { data, error } = await getEntityConfigurations(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
     const raw = data as unknown as {
       "x-medkit"?: {
@@ -457,11 +509,20 @@ export class MedkitApiClient {
       name: string;
       asynchronous_execution?: boolean;
       "x-medkit"?: {
-        ros2?: { kind?: "service" | "action"; service?: string; action?: string; type?: string };
+        ros2?: {
+          kind?: "service" | "action";
+          service?: string;
+          action?: string;
+          type?: string;
+        };
         type_info?: RawOpTypeInfo;
       };
     }
-    const { data, error } = await getEntityOperations(this.client, entityType, entityId);
+    const { data, error } = await getEntityOperations(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
     const items = unwrapItems<RawOp>(data as unknown);
     return items.map((op) => {
@@ -528,7 +589,12 @@ export class MedkitApiClient {
       executionId,
     );
     if (error) throwApiError(error);
-    const raw = data as unknown as { id?: string | null; status: string; parameters?: unknown | null; "x-medkit"?: { ros2_status?: string | null } | null };
+    const raw = data as unknown as {
+      id?: string | null;
+      status: string;
+      parameters?: unknown | null;
+      "x-medkit"?: { ros2_status?: string | null } | null;
+    };
     return {
       id: raw.id,
       status: narrowExecutionStatus(raw.status),
@@ -558,7 +624,10 @@ export class MedkitApiClient {
   async listAllFaults(): Promise<ListFaultsResponse> {
     const { data, error } = await this.client.GET("/faults");
     if (error) throwApiError(error);
-    const raw = data as unknown as { items?: unknown[]; "x-medkit"?: { count?: number } };
+    const raw = data as unknown as {
+      items?: unknown[];
+      "x-medkit"?: { count?: number };
+    };
     const items = (raw.items || []).map((f) => this.transformFault(f));
     return { items, count: raw["x-medkit"]?.count || items.length };
   }
@@ -567,9 +636,16 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<ListFaultsResponse> {
-    const { data, error } = await getEntityFaults(this.client, entityType, entityId);
+    const { data, error } = await getEntityFaults(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
-    const raw = data as unknown as { items?: unknown[]; "x-medkit"?: { count?: number } };
+    const raw = data as unknown as {
+      items?: unknown[];
+      "x-medkit"?: { count?: number };
+    };
     const items = (raw.items || []).map((f) => this.transformFault(f));
     return { items, count: raw["x-medkit"]?.count || items.length };
   }
@@ -579,7 +655,12 @@ export class MedkitApiClient {
     entityId: string,
     faultCode: string,
   ): Promise<void> {
-    const { error } = await deleteEntityFault(this.client, entityType, entityId, faultCode);
+    const { error } = await deleteEntityFault(
+      this.client,
+      entityType,
+      entityId,
+      faultCode,
+    );
     if (error) throwApiError(error);
   }
 
@@ -587,7 +668,11 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<void> {
-    const { error } = await deleteAllEntityFaults(this.client, entityType, entityId);
+    const { error } = await deleteAllEntityFaults(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
   }
 
@@ -601,7 +686,12 @@ export class MedkitApiClient {
     entityId: string,
     faultCode: string,
   ): Promise<FaultResponse> {
-    const { data, error } = await getEntityFault(this.client, entityType, entityId, faultCode);
+    const { data, error } = await getEntityFault(
+      this.client,
+      entityType,
+      entityId,
+      faultCode,
+    );
     if (error) throwApiError(error);
     // The schema uses an open-form response object; cast through unknown to
     // our local FaultResponse type which maps the wire shape exactly.
@@ -618,7 +708,11 @@ export class MedkitApiClient {
     entityId: string,
   ): Promise<BulkDataCategory> {
     try {
-      const { data, error } = await getEntityBulkDataCategories(this.client, entityType, entityId);
+      const { data, error } = await getEntityBulkDataCategories(
+        this.client,
+        entityType,
+        entityId,
+      );
       if (error) throwApiError(error);
       return data as unknown as BulkDataCategory;
     } catch {
@@ -652,9 +746,20 @@ export class MedkitApiClient {
    * Build download URL for a bulk data URI (as returned in snapshot bulk_data_uri).
    */
   getBulkDataDownloadUrl(bulkDataUri: string): string {
-    // bulkDataUri is an absolute path like "/apps/motor/bulk-data/rosbags/FAULT_CODE".
+    // bulkDataUri is an absolute path like
+    // "/apps/motor/bulk-data/rosbags/fault_MOTOR_OVERHEAT_1738664999000".
     // Strip the leading slash and join onto the same resolved base the typed
     // client uses, so the download root always matches the API request root.
+    //
+    // Guarded rather than dereferenced straight away: a snapshot whose URI the
+    // gateway could not build arrives with the field absent. Either way the
+    // throw leaves a click handler and React rethrows it to window.onerror with
+    // the panel still mounted - the guard buys a readable message in the
+    // console (and for callers that catch it, on screen) instead of a bare
+    // `undefined.replace` TypeError.
+    if (!bulkDataUri) {
+      throw new Error("rosbag snapshot has no bulk_data_uri to download");
+    }
     return `${this.resolvedBase}/${bulkDataUri.replace(/^\//, "")}`;
   }
 
@@ -684,9 +789,19 @@ export class MedkitApiClient {
       timestamp: string;
       severity: string;
       message: string;
-      context?: { node: string; file?: string; function?: string; line?: number } | null;
+      context?: {
+        node: string;
+        file?: string;
+        function?: string;
+        line?: number;
+      } | null;
     }
-    const { data, error } = await dispatchGetEntityLogs(this.client, entityType, entityId, params);
+    const { data, error } = await dispatchGetEntityLogs(
+      this.client,
+      entityType,
+      entityId,
+      params,
+    );
     if (error) throwApiError(error);
     const raw = data as unknown as RawCollection;
     const items: LogEntry[] = (raw.items ?? []).map((e) => {
@@ -699,7 +814,9 @@ export class MedkitApiClient {
         context: entry.context ?? { node: "unknown" },
       };
     });
-    const result: { items: LogEntry[]; "x-medkit"?: LogListXMedkit } = { items };
+    const result: { items: LogEntry[]; "x-medkit"?: LogListXMedkit } = {
+      items,
+    };
     if (raw["x-medkit"]) result["x-medkit"] = raw["x-medkit"];
     return result;
   }
@@ -712,7 +829,11 @@ export class MedkitApiClient {
     entityType: SovdResourceEntityType,
     entityId: string,
   ): Promise<LogConfiguration> {
-    const { data, error } = await dispatchGetEntityLogsConfiguration(this.client, entityType, entityId);
+    const { data, error } = await dispatchGetEntityLogsConfiguration(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) throwApiError(error);
     return data as LogConfiguration;
   }
@@ -726,7 +847,12 @@ export class MedkitApiClient {
     entityId: string,
     config: LogConfiguration,
   ): Promise<void> {
-    const { error } = await dispatchPutEntityLogsConfiguration(this.client, entityType, entityId, config);
+    const { error } = await dispatchPutEntityLogsConfiguration(
+      this.client,
+      entityType,
+      entityId,
+      config,
+    );
     if (error) throwApiError(error);
   }
 
@@ -741,7 +867,11 @@ export class MedkitApiClient {
     entityType: LifecycleEntityType,
     entityId: string,
   ): Promise<LifecycleStatusResponse | "unavailable"> {
-    const { data, error } = await dispatchGetEntityStatus(this.client, entityType, entityId);
+    const { data, error } = await dispatchGetEntityStatus(
+      this.client,
+      entityType,
+      entityId,
+    );
     if (error) {
       if (isMedkitError(error) && error.status === 501) return "unavailable";
       throwApiError(error);
@@ -759,7 +889,12 @@ export class MedkitApiClient {
     entityId: string,
     action: LifecycleAction,
   ): Promise<void> {
-    const { error } = await dispatchSetEntityStatus(this.client, entityType, entityId, action);
+    const { error } = await dispatchSetEntityStatus(
+      this.client,
+      entityType,
+      entityId,
+      action,
+    );
     if (error) throwApiError(error);
   }
 
@@ -792,7 +927,8 @@ export class MedkitApiClient {
         }
         const raw = data as Record<string, unknown>;
         const fd = (raw.fault as Record<string, unknown> | undefined) ?? raw;
-        if (typeof fd === "object" && fd !== null && "fault_code" in fd) return this.transformFault(fd);
+        if (typeof fd === "object" && fd !== null && "fault_code" in fd)
+          return this.transformFault(fd);
         return fd as unknown as Fault;
       } catch {
         if (!unsubscribed) onError?.(new Error("Failed to parse fault event"));
@@ -845,7 +981,8 @@ export class MedkitApiClient {
     const label = f.severity_label?.toLowerCase() || "";
     if (label === "critical" || f.severity >= 3) severity = "critical";
     else if (label === "error" || f.severity === 2) severity = "error";
-    else if (label === "warn" || label === "warning" || f.severity === 1) severity = "warning";
+    else if (label === "warn" || label === "warning" || f.severity === 1)
+      severity = "warning";
 
     let status: FaultStatus = "active";
     const s = f.status?.toLowerCase() || "";
