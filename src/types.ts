@@ -11,7 +11,8 @@ import type { TopicSchema } from "./schema-utils";
 // Entity Types
 // =============================================================================
 
-export type SovdResourceEntityType = "areas" | "components" | "apps" | "functions";
+export type SovdResourceEntityType =
+  "areas" | "components" | "apps" | "functions";
 
 export interface SovdEntity {
   id: string;
@@ -140,10 +141,7 @@ export interface CreateExecutionRequest {
  * freshly accepted goal and never emits the SOVD "accepted" alias.
  */
 export type CreateExecutionStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed";
+  "pending" | "running" | "completed" | "failed";
 
 export interface CreateExecutionResponse {
   id?: string;
@@ -166,7 +164,8 @@ export interface CreateExecutionResponse {
  *   - `ros2_status` from x-medkit as supplemental info.
  */
 /** The execution status values the gateway emits over the wire. */
-export type GatewayExecutionStatus = "pending" | "running" | "completed" | "failed";
+export type GatewayExecutionStatus =
+  "pending" | "running" | "completed" | "failed";
 
 /**
  * Execution status as the UI tracks it. `canceled` is a client-only terminal
@@ -243,9 +242,9 @@ export interface RosbagSnapshot extends SnapshotBase {
   duration_sec: number;
   format: "mcap" | "sqlite3" | "db3";
   "x-medkit"?: {
-    captured_at: string;
-    /** Every fault this recording covers; a burst of correlated faults shares one bag. */
-    fault_codes?: string[];
+    /** When the window was captured; the gateway leaves the key out when the
+     *  recording predates the timestamp. */
+    captured_at?: string;
   };
 }
 
@@ -310,7 +309,14 @@ export interface BulkDataDescriptor {
   size: number;
   creation_date: string;
   "x-medkit"?: {
-    fault_code: string;
+    /** Every fault this recording covers; a burst of correlated faults shares
+     *  one bag, so the codes live on the DESCRIPTOR, not on the fault's rosbag
+     *  snapshot. */
+    fault_codes?: string[];
+    /** Pre-#620 gateways: the single fault the descriptor was listed under. */
+    fault_code?: string;
+    /** Bag directory name; descriptors serving the same bytes share it. */
+    recording_id?: string;
     duration_sec: number;
     format: string;
   };
@@ -446,11 +452,7 @@ export interface RootOverview {
 export type LifecycleStatus = "ready" | "notReady";
 
 export type LifecycleAction =
-  | "start"
-  | "restart"
-  | "force-restart"
-  | "shutdown"
-  | "force-shutdown";
+  "start" | "restart" | "force-restart" | "shutdown" | "force-shutdown";
 
 /** GET /{apps|components}/{id}/status body. The action keys carry the transition
  * endpoint URIs; the panel only needs `status`. */

@@ -18,7 +18,11 @@ import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
-import { useColorSchemeTheme, useGatewayConnectionSettings, useSharedConnection } from "./panel-hooks";
+import {
+  useColorSchemeTheme,
+  useGatewayConnectionSettings,
+  useSharedConnection,
+} from "./panel-hooks";
 import { OperationsPanel } from "./OperationsPanel";
 import { LogsPanel } from "./LogsPanel";
 import { ConfigurationsPanel } from "./ConfigurationsPanel";
@@ -66,7 +70,13 @@ type TreeStatus = "ready" | "notReady" | "unavailable" | "unknown" | "error";
 const LAMP_CONCURRENCY = 4;
 const LAMP_POLL_MS = 10_000;
 
-const STANDARD_TABS: Tab[] = ["data", "operations", "configurations", "faults", "logs"];
+const STANDARD_TABS: Tab[] = [
+  "data",
+  "operations",
+  "configurations",
+  "faults",
+  "logs",
+];
 
 // ---------------------------------------------------------------------------
 // Capability -> tab mapping
@@ -86,11 +96,14 @@ interface ResourceCounts {
   faults: number;
 }
 
-function deriveVisibleTabs(capabilities: RootCapabilities | null | undefined): Tab[] {
+function deriveVisibleTabs(
+  capabilities: RootCapabilities | null | undefined,
+): Tab[] {
   // Missing / non-object capabilities (fallback mode, or a gateway whose GET /
   // omits the field) -> show the standard tabs rather than crashing or blanking.
   // A present capabilities object is trusted as-is, even if every flag is false.
-  if (capabilities == null || typeof capabilities !== "object") return STANDARD_TABS;
+  if (capabilities == null || typeof capabilities !== "object")
+    return STANDARD_TABS;
   const tabs: Tab[] = [];
   if (capabilities.data_access) tabs.push("data");
   if (capabilities.operations) tabs.push("operations");
@@ -158,22 +171,33 @@ export function EntityBrowserTabBar({
     let cancelled = false;
 
     const fetchOps = capabilities.operations
-      ? client.listOperations(entityType, entityId).then((ops) => ops.length).catch(() => 0)
+      ? client
+          .listOperations(entityType, entityId)
+          .then((ops) => ops.length)
+          .catch(() => 0)
       : Promise.resolve(0);
 
     const fetchConfigs = capabilities.configurations
-      ? client.listConfigurations(entityType, entityId).then((r) => r.parameters.length).catch(() => 0)
+      ? client
+          .listConfigurations(entityType, entityId)
+          .then((r) => r.parameters.length)
+          .catch(() => 0)
       : Promise.resolve(0);
 
     const fetchFaults = capabilities.faults
-      ? client.listEntityFaults(entityType, entityId).then((r) => r.items.length).catch(() => 0)
+      ? client
+          .listEntityFaults(entityType, entityId)
+          .then((r) => r.items.length)
+          .catch(() => 0)
       : Promise.resolve(0);
 
-    void Promise.all([fetchOps, fetchConfigs, fetchFaults]).then(([ops, configs, faults]) => {
-      if (cancelled || !mountedRef.current) return;
-      if (entityRef.current !== currentEntityId) return;
-      setCounts({ operations: ops, configurations: configs, faults });
-    });
+    void Promise.all([fetchOps, fetchConfigs, fetchFaults]).then(
+      ([ops, configs, faults]) => {
+        if (cancelled || !mountedRef.current) return;
+        if (entityRef.current !== currentEntityId) return;
+        setCounts({ operations: ops, configurations: configs, faults });
+      },
+    );
 
     return () => {
       cancelled = true;
@@ -182,14 +206,16 @@ export function EntityBrowserTabBar({
 
   // Visibility is capability-only, so the tab set is stable across renders for a
   // given capability set (counts no longer affect it).
-  const visibleTabs = useMemo(() => deriveVisibleTabs(capabilities), [capabilities]);
+  const visibleTabs = useMemo(
+    () => deriveVisibleTabs(capabilities),
+    [capabilities],
+  );
 
   // If the active tab isn't in the visible set (e.g. the gateway doesn't expose
   // it), fall back to the first visible tab.
-  const resolvedActive: Tab =
-    visibleTabs.includes(activeTab)
-      ? activeTab
-      : (visibleTabs[0] ?? "data");
+  const resolvedActive: Tab = visibleTabs.includes(activeTab)
+    ? activeTab
+    : (visibleTabs[0] ?? "data");
 
   // Notify parent of active-tab fallback on the next tick (avoid setState during render)
   const onTabChangeRef = useRef(onTabChange);
@@ -204,7 +230,13 @@ export function EntityBrowserTabBar({
     <div role="tablist" style={{ display: "flex", gap: 2, marginBottom: 8 }}>
       {visibleTabs.map((t) => {
         const count = counts
-          ? (t === "operations" ? counts.operations : t === "configurations" ? counts.configurations : t === "faults" ? counts.faults : 0)
+          ? t === "operations"
+            ? counts.operations
+            : t === "configurations"
+              ? counts.configurations
+              : t === "faults"
+                ? counts.faults
+                : 0
           : 0;
         const isActive = resolvedActive === t;
         return (
@@ -227,10 +259,7 @@ export function EntityBrowserTabBar({
               <span
                 aria-hidden="true"
                 style={{
-                  ...S.badge(
-                    "#fff",
-                    t === "faults" ? c.critical : c.accent,
-                  ),
+                  ...S.badge("#fff", t === "faults" ? c.critical : c.accent),
                   marginLeft: 4,
                   fontSize: 10,
                 }}
@@ -267,7 +296,9 @@ function EntityBrowserPanel({
   const [connError, setConnError] = useState<string | undefined>();
 
   // null = not yet fetched or getRoot failed (fallback mode)
-  const [capabilities, setCapabilities] = useState<RootCapabilities | null>(null);
+  const [capabilities, setCapabilities] = useState<RootCapabilities | null>(
+    null,
+  );
   // Bumped on every connect attempt so a slow getRoot from a superseded
   // connection cannot stamp the previous gateway's capabilities after a fast
   // reconnect to a different server.
@@ -282,7 +313,8 @@ function EntityBrowserPanel({
 
   // Selection
   const [selected, setSelected] = useState<SovdEntity | null>(null);
-  const [selectedType, setSelectedType] = useState<SovdResourceEntityType>("components");
+  const [selectedType, setSelectedType] =
+    useState<SovdResourceEntityType>("components");
   const [activeTab, setActiveTab] = useState<Tab>("data");
 
   // Tab data
@@ -297,7 +329,9 @@ function EntityBrowserPanel({
   // Per-entity lifecycle readiness for the tree lamp (apps/components only).
   // Keyed by `${entityType}:${id}`. Fetched lazily as nodes appear; the in-flight
   // set dedupes so each entity is queried once per connection.
-  const [statusByEntity, setStatusByEntity] = useState<Record<string, TreeStatus>>({});
+  const [statusByEntity, setStatusByEntity] = useState<
+    Record<string, TreeStatus>
+  >({});
   const statusInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -351,10 +385,16 @@ function EntityBrowserPanel({
       // (via HostInfoProvider). Fall back to /components so the tree is not
       // empty just because no manifest is configured.
       const roots: SovdEntity[] =
-        areas.length > 0 ? areas : await c.listComponents().catch(() => [] as SovdEntity[]);
+        areas.length > 0
+          ? areas
+          : await c.listComponents().catch(() => [] as SovdEntity[]);
       setRootLabel(areas.length > 0 ? "Areas" : "Components");
-      setTree(roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })));
-      setFunctions(funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })));
+      setTree(
+        roots.map((r) => ({ entity: r, isExpanded: false, isLoading: false })),
+      );
+      setFunctions(
+        funcs.map((f) => ({ entity: f, isExpanded: false, isLoading: false })),
+      );
     } catch (err) {
       setConnError(err instanceof Error ? err.message : "Connection failed");
     }
@@ -376,12 +416,22 @@ function EntityBrowserPanel({
     // Bind the connection token so a slow read from a previous gateway can't
     // stamp its readiness onto the tree after the operator switches gateways.
     const mySeq = connSeqRef.current;
-    const targets: { key: string; type: LifecycleEntityType; id: string }[] = [];
+    const targets: { key: string; type: LifecycleEntityType; id: string }[] =
+      [];
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
         const t: LifecycleEntityType | null =
-          n.entity.type === "app" ? "apps" : n.entity.type === "component" ? "components" : null;
-        if (t != null) targets.push({ key: `${t}:${n.entity.id}`, type: t, id: n.entity.id });
+          n.entity.type === "app"
+            ? "apps"
+            : n.entity.type === "component"
+              ? "components"
+              : null;
+        if (t != null)
+          targets.push({
+            key: `${t}:${n.entity.id}`,
+            type: t,
+            id: n.entity.id,
+          });
         if (n.children) walk(n.children);
       }
     };
@@ -408,14 +458,24 @@ function EntityBrowserPanel({
           // A genuine read failure (transport/5xx) is distinct from "no provider"
           // (501 -> "unavailable" above). Don't blank a lamp we already resolved
           // on a transient blip; only mark "error" for a node we never resolved.
-          console.warn(`[EntityBrowser] lamp status read failed for ${t.key}:`, err);
-          setStatusByEntity((prev) => (t.key in prev ? prev : { ...prev, [t.key]: "error" }));
+          console.warn(
+            `[EntityBrowser] lamp status read failed for ${t.key}:`,
+            err,
+          );
+          setStatusByEntity((prev) =>
+            t.key in prev ? prev : { ...prev, [t.key]: "error" },
+          );
         } finally {
           statusInFlightRef.current.delete(t.key);
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(LAMP_CONCURRENCY, targets.length) }, worker));
+    await Promise.all(
+      Array.from(
+        { length: Math.min(LAMP_CONCURRENCY, targets.length) },
+        worker,
+      ),
+    );
   }, [client, tree]);
 
   // Fetch immediately when the tree or connection changes (new nodes appear),
@@ -427,7 +487,10 @@ function EntityBrowserPanel({
   }, [fetchLampStatuses]);
   useEffect(() => {
     if (!client) return;
-    const id = setInterval(() => void fetchLampStatusesRef.current(), LAMP_POLL_MS);
+    const id = setInterval(
+      () => void fetchLampStatusesRef.current(),
+      LAMP_POLL_MS,
+    );
     return () => clearInterval(id);
   }, [client]);
 
@@ -465,7 +528,11 @@ function EntityBrowserPanel({
 
         if (e.type === "area") {
           const comps = await client.listAreaComponents(e.id);
-          children = comps.map((c) => ({ entity: c, isExpanded: false, isLoading: false }));
+          children = comps.map((c) => ({
+            entity: c,
+            isExpanded: false,
+            isLoading: false,
+          }));
         } else if (e.type === "component") {
           const appList = await client.listComponentApps(e.id);
           children = appList.map((a) => ({
@@ -503,10 +570,13 @@ function EntityBrowserPanel({
       if (!client) return;
       setSelected(entity);
       const eType: SovdResourceEntityType =
-        entity.type === "area" ? "areas" :
-        entity.type === "app" ? "apps" :
-        entity.type === "function" ? "functions" :
-        "components";
+        entity.type === "area"
+          ? "areas"
+          : entity.type === "app"
+            ? "apps"
+            : entity.type === "function"
+              ? "functions"
+              : "components";
       setSelectedType(eType);
       setActiveTab("data");
       setTabLoading(true);
@@ -517,14 +587,20 @@ function EntityBrowserPanel({
 
       try {
         const [dataRes, faultsRes] = await Promise.all([
-          client.listEntityData(eType, entity.id).catch(() => [] as ComponentTopic[]),
-          client.listEntityFaults(eType, entity.id).catch(() => ({ items: [] as Fault[] })),
+          client
+            .listEntityData(eType, entity.id)
+            .catch(() => [] as ComponentTopic[]),
+          client
+            .listEntityFaults(eType, entity.id)
+            .catch(() => ({ items: [] as Fault[] })),
         ]);
         setTopics(dataRes);
         setFaults(faultsRes.items);
 
         if (entity.type === "component") {
-          const componentApps = await client.listComponentApps(entity.id).catch(() => []);
+          const componentApps = await client
+            .listComponentApps(entity.id)
+            .catch(() => []);
           setApps(componentApps);
         }
       } catch (err) {
@@ -558,12 +634,32 @@ function EntityBrowserPanel({
   return (
     <div style={{ ...S.panelRoot(theme), display: "flex", gap: 8 }}>
       {/* Left: Tree */}
-      <div style={{ width: "40%", minWidth: 180, overflow: "auto", borderRight: `1px solid ${c.borderLight}`, paddingRight: 8 }}>
+      <div
+        style={{
+          width: "40%",
+          minWidth: 180,
+          overflow: "auto",
+          borderRight: `1px solid ${c.borderLight}`,
+          paddingRight: 8,
+        }}
+      >
         <h3 style={{ ...S.heading(theme), fontSize: 13 }}>Entities</h3>
-        {tree.length === 0 && functions.length === 0 && <div style={S.emptyState(theme)}>No entities found</div>}
+        {tree.length === 0 && functions.length === 0 && (
+          <div style={S.emptyState(theme)}>No entities found</div>
+        )}
         {tree.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 4 }}>{rootLabel}</div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: c.textMuted,
+                marginBottom: 2,
+                marginTop: 4,
+              }}
+            >
+              {rootLabel}
+            </div>
             {tree.map((node, i) => (
               <TreeNodeRow
                 key={node.entity.id}
@@ -581,7 +677,17 @@ function EntityBrowserPanel({
         )}
         {functions.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 2, marginTop: 8 }}>Functions</div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: c.textMuted,
+                marginBottom: 2,
+                marginTop: 8,
+              }}
+            >
+              Functions
+            </div>
             {functions.map((node) => (
               <TreeNodeRow
                 key={node.entity.id}
@@ -602,32 +708,40 @@ function EntityBrowserPanel({
       {/* Right: Details */}
       <div style={{ flex: 1, overflow: "auto" }}>
         {!selected ? (
-          <div style={S.emptyState(theme)}>Select an entity to view details</div>
+          <div style={S.emptyState(theme)}>
+            Select an entity to view details
+          </div>
         ) : (
           <>
             <h3 style={S.heading(theme)}>
               {selected.name}
-              <span style={{ ...S.badge(c.textInvert, c.accent), marginLeft: 8 }}>
+              <span
+                style={{ ...S.badge(c.textInvert, c.accent), marginLeft: 8 }}
+              >
                 {selected.type}
               </span>
             </h3>
 
             {/* Lifecycle status control - apps and components only (areas and
                 functions have no lifecycle status). */}
-            {client != null && (selectedType === "apps" || selectedType === "components") && (
-              <EntityStatusControl
-                // Remount per entity so armed confirmations / pending action
-                // state never carry over to a different app/component.
-                key={`${selectedType}:${selected.id}`}
-                client={client}
-                entityType={selectedType}
-                entityId={selected.id}
-                theme={theme}
-                onStatus={(s) =>
-                  setStatusByEntity((prev) => ({ ...prev, [`${selectedType}:${selected.id}`]: s }))
-                }
-              />
-            )}
+            {client != null &&
+              (selectedType === "apps" || selectedType === "components") && (
+                <EntityStatusControl
+                  // Remount per entity so armed confirmations / pending action
+                  // state never carry over to a different app/component.
+                  key={`${selectedType}:${selected.id}`}
+                  client={client}
+                  entityType={selectedType}
+                  entityId={selected.id}
+                  theme={theme}
+                  onStatus={(s) =>
+                    setStatusByEntity((prev) => ({
+                      ...prev,
+                      [`${selectedType}:${selected.id}`]: s,
+                    }))
+                  }
+                />
+              )}
 
             {/* Capability-driven tab bar */}
             <EntityBrowserTabBar
@@ -698,7 +812,13 @@ function EntityBrowserPanel({
                     onClick={() => void selectEntity(app)}
                   >
                     <strong>{app.name}</strong>
-                    <span style={{ color: c.textMuted, marginLeft: 8, fontSize: 11 }}>
+                    <span
+                      style={{
+                        color: c.textMuted,
+                        marginLeft: 8,
+                        fontSize: 11,
+                      }}
+                    >
                       {app.fqn}
                     </span>
                   </div>
@@ -737,15 +857,30 @@ export function TreeNodeRow({
 }): ReactElement {
   const c = S.colors(theme);
   const isSelected = selected?.id === node.entity.id;
-  const hasChildren = node.entity.type !== "app" && node.entity.type !== "function";
-  const icon = node.entity.type === "area" ? "📁" : node.entity.type === "component" ? "🔧" : node.entity.type === "function" ? "⚡" : "📦";
+  const hasChildren =
+    node.entity.type !== "app" && node.entity.type !== "function";
+  const icon =
+    node.entity.type === "area"
+      ? "📁"
+      : node.entity.type === "component"
+        ? "🔧"
+        : node.entity.type === "function"
+          ? "⚡"
+          : "📦";
 
   // Readiness lamp for apps/components. Green = ready, amber = notReady, grey =
   // status read failed. No lamp for unavailable (no lifecycle provider), unknown,
   // or not-yet-fetched, and none for areas/functions (no lifecycle status).
   const lampType: LifecycleEntityType | null =
-    node.entity.type === "app" ? "apps" : node.entity.type === "component" ? "components" : null;
-  const lampStatus = lampType != null ? statusByEntity[`${lampType}:${node.entity.id}`] : undefined;
+    node.entity.type === "app"
+      ? "apps"
+      : node.entity.type === "component"
+        ? "components"
+        : null;
+  const lampStatus =
+    lampType != null
+      ? statusByEntity[`${lampType}:${node.entity.id}`]
+      : undefined;
   // notReady uses the same amber as the detail badge (it means "not started",
   // not a fault), so the tree lamp and the detail control agree.
   const lampColor =
@@ -769,13 +904,22 @@ export function TreeNodeRow({
           cursor: "pointer",
           borderRadius: 4,
           background: isSelected ? c.accent + "22" : "transparent",
-          borderLeft: isSelected ? `2px solid ${c.accent}` : "2px solid transparent",
+          borderLeft: isSelected
+            ? `2px solid ${c.accent}`
+            : "2px solid transparent",
         }}
         onClick={() => onSelect(node.entity)}
       >
         {hasChildren && (
           <span
-            style={{ marginRight: 4, fontSize: 10, userSelect: "none", cursor: "pointer", width: 14, textAlign: "center" }}
+            style={{
+              marginRight: 4,
+              fontSize: 10,
+              userSelect: "none",
+              cursor: "pointer",
+              width: 14,
+              textAlign: "center",
+            }}
             onClick={(e) => {
               e.stopPropagation();
               onToggle(path);
@@ -800,7 +944,13 @@ export function TreeNodeRow({
             }}
           />
         )}
-        <span style={{ fontSize: 12, fontWeight: isSelected ? 600 : 400, color: c.text }}>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: isSelected ? 600 : 400,
+            color: c.text,
+          }}
+        >
           {node.entity.name}
         </span>
       </div>
@@ -850,6 +1000,7 @@ function FaultsTab({
   const [faultDetail, setFaultDetail] = useState<FaultResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const handleClear = useCallback(
     async (faultCode: string) => {
@@ -876,7 +1027,11 @@ function FaultsTab({
       setDetailLoading(true);
       setFaultDetail(null);
       try {
-        const detail = await client.getFaultWithEnvironmentData(entityType, entityId, faultCode);
+        const detail = await client.getFaultWithEnvironmentData(
+          entityType,
+          entityId,
+          faultCode,
+        );
         setFaultDetail(detail);
       } catch {
         // If environment data endpoint fails, show empty
@@ -891,13 +1046,22 @@ function FaultsTab({
   const handleDownload = useCallback(
     (bulkDataUri: string) => {
       if (!client) return;
-      // Keyed by the URI, not the fault code: several recordings per fault means
-      // keying by code disables every sibling's button on one click.
-      setDownloading(bulkDataUri);
+      setDownloadError(null);
       try {
+        // URL first, spinner second: with the order flipped, a throw left
+        // `downloading` holding `undefined`, which matched every row whose
+        // snapshot has no URI and spun all of their buttons at once.
         const url = client.getBulkDataDownloadUrl(bulkDataUri);
+        // Keyed by the URI, not the fault code: several recordings per fault
+        // means keying by code disables every sibling's button on one click.
+        setDownloading(bulkDataUri);
         // Open in new tab/trigger browser download
         window.open(url, "_blank");
+      } catch (err) {
+        // Without this the click is a silent no-op that looks exactly like a
+        // download that worked, and the technician goes hunting in their
+        // downloads folder for a bag that was never requested.
+        setDownloadError(err instanceof Error ? err.message : String(err));
       } finally {
         setTimeout(() => setDownloading(null), 1000);
       }
@@ -906,11 +1070,7 @@ function FaultsTab({
   );
 
   if (faults.length === 0) {
-    return (
-      <div style={S.emptyState(theme)}>
-        ✅ No active faults
-      </div>
-    );
+    return <div style={S.emptyState(theme)}>✅ No active faults</div>;
   }
 
   return (
@@ -923,7 +1083,14 @@ function FaultsTab({
             borderLeft: `3px solid ${S.severityColor(f.severity, theme)}`,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 4,
+            }}
+          >
             <strong style={{ fontSize: 12 }}>{f.code}</strong>
             <span style={S.badge("#fff", S.severityColor(f.severity, theme))}>
               {f.severity}
@@ -951,9 +1118,25 @@ function FaultsTab({
 
           {/* Expanded snapshots */}
           {expandedFault === f.code && (
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${c.borderLight}` }}>
+            <div
+              style={{
+                marginTop: 8,
+                paddingTop: 8,
+                borderTop: `1px solid ${c.borderLight}`,
+              }}
+            >
               {detailLoading && (
-                <div style={{ color: c.textMuted, fontSize: 12 }}>Loading snapshots…</div>
+                <div style={{ color: c.textMuted, fontSize: 12 }}>
+                  Loading snapshots…
+                </div>
+              )}
+              {downloadError && (
+                <div
+                  role="alert"
+                  style={{ color: "#e74c3c", fontSize: 12, marginBottom: 6 }}
+                >
+                  ⚠ {downloadError}
+                </div>
               )}
               {!detailLoading && faultDetail && (
                 <SnapshotList
@@ -966,7 +1149,9 @@ function FaultsTab({
                 />
               )}
               {!detailLoading && !faultDetail && (
-                <div style={{ color: c.textMuted, fontSize: 12 }}>No environment data available</div>
+                <div style={{ color: c.textMuted, fontSize: 12 }}>
+                  No environment data available
+                </div>
               )}
             </div>
           )}
@@ -1007,7 +1192,12 @@ export function SnapshotList({
   faultCode,
 }: {
   snapshots: Snapshot[];
-  environmentData?: { extended_data_records?: { first_occurrence?: string; last_occurrence?: string } };
+  environmentData?: {
+    extended_data_records?: {
+      first_occurrence?: string;
+      last_occurrence?: string;
+    };
+  };
   theme: Theme;
   // The URI identifies the recording; the fault code no longer does, because a
   // fault can hold several.
@@ -1018,7 +1208,11 @@ export function SnapshotList({
   const c = S.colors(theme);
 
   if (snapshots.length === 0) {
-    return <div style={{ color: c.textMuted, fontSize: 12 }}>No snapshots captured</div>;
+    return (
+      <div style={{ color: c.textMuted, fontSize: 12 }}>
+        No snapshots captured
+      </div>
+    );
   }
 
   // Show occurrence timeline if available
@@ -1028,12 +1222,25 @@ export function SnapshotList({
     <div>
       {records && (records.first_occurrence || records.last_occurrence) && (
         <div style={{ fontSize: 11, color: c.textMuted, marginBottom: 6 }}>
-          📅 First: {records.first_occurrence ? new Date(records.first_occurrence).toLocaleString() : "—"}
+          📅 First:{" "}
+          {records.first_occurrence
+            ? new Date(records.first_occurrence).toLocaleString()
+            : "—"}
           {" · "}
-          Last: {records.last_occurrence ? new Date(records.last_occurrence).toLocaleString() : "—"}
+          Last:{" "}
+          {records.last_occurrence
+            ? new Date(records.last_occurrence).toLocaleString()
+            : "—"}
         </div>
       )}
-      <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 4 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: c.textMuted,
+          marginBottom: 4,
+        }}
+      >
         {snapshots.length} snapshot{snapshots.length !== 1 ? "s" : ""}
       </div>
       {snapshots.map((snap, idx) => {
@@ -1048,30 +1255,69 @@ export function SnapshotList({
                 marginBottom: 6,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: 4,
+                }}
+              >
                 <span style={{ fontSize: 14 }}>📦</span>
                 <strong style={{ fontSize: 12 }}>Rosbag Recording</strong>
                 <span style={S.badge("#fff", c.accent)}>{snap.format}</span>
                 {/* One row per occurrence once a fault keeps a history; the
                     recording name is what tells them apart. */}
-                <span style={{ fontSize: 10, color: c.textMuted, fontFamily: "monospace" }}>{snap.name}</span>
-                <span style={{ flex: 1 }} />
-                <button
-                  style={S.btn(theme)}
-                  onClick={() => onDownload(snap.bulk_data_uri)}
-                  disabled={downloading === snap.bulk_data_uri}
-                  title={snap.name}
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: c.textMuted,
+                    fontFamily: "monospace",
+                  }}
                 >
-                  {downloading === snap.bulk_data_uri ? "⏳" : "⬇"} Download
-                </button>
+                  {snap.name}
+                </span>
+                <span style={{ flex: 1 }} />
+                {/* No URI, no button: the gateway could not build a download
+                    path for this recording, and an enabled button here would
+                    throw on click and look identical to a successful one. */}
+                {snap.bulk_data_uri ? (
+                  <button
+                    style={S.btn(theme)}
+                    onClick={() => onDownload(snap.bulk_data_uri)}
+                    disabled={downloading === snap.bulk_data_uri}
+                    title={snap.name}
+                  >
+                    {downloading === snap.bulk_data_uri ? "⏳" : "⬇"} Download
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 10, color: c.textMuted }}>
+                    no download path
+                  </span>
+                )}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 12px", fontSize: 11 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr",
+                  gap: "2px 12px",
+                  fontSize: 11,
+                }}
+              >
                 <span style={{ color: c.textMuted }}>Size:</span>
                 <span>{formatBytes(snap.size_bytes)}</span>
                 <span style={{ color: c.textMuted }}>Duration:</span>
                 <span>{formatDuration(snap.duration_sec)}</span>
                 <span style={{ color: c.textMuted }}>URI:</span>
-                <span style={{ fontFamily: "monospace", fontSize: 10, color: c.textMuted }}>{snap.bulk_data_uri}</span>
+                <span
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: 10,
+                    color: c.textMuted,
+                  }}
+                >
+                  {snap.bulk_data_uri}
+                </span>
               </div>
             </div>
           );
@@ -1090,34 +1336,55 @@ export function SnapshotList({
               marginBottom: 6,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 4,
+              }}
+            >
               <span style={{ fontSize: 14 }}>📸</span>
               <strong style={{ fontSize: 12 }}>Freeze Frame</strong>
               {xm && "message_type" in xm && (
-                <span style={S.badge(c.textMuted, c.bgAlt)}>{(xm as { message_type: string }).message_type}</span>
+                <span style={S.badge(c.textMuted, c.bgAlt)}>
+                  {(xm as { message_type: string }).message_type}
+                </span>
               )}
             </div>
             {xm && "topic" in xm && (
-              <div style={{ fontSize: 11, color: c.textMuted, marginBottom: 4 }}>
-                Topic: <code style={{ color: c.accent }}>{(xm as { topic: string }).topic}</code>
+              <div
+                style={{ fontSize: 11, color: c.textMuted, marginBottom: 4 }}
+              >
+                Topic:{" "}
+                <code style={{ color: c.accent }}>
+                  {(xm as { topic: string }).topic}
+                </code>
                 {" · "}
-                Captured: {(xm as { captured_at?: string }).captured_at
-                  ? new Date((xm as { captured_at: string }).captured_at).toLocaleString()
+                Captured:{" "}
+                {(xm as { captured_at?: string }).captured_at
+                  ? new Date(
+                      (xm as { captured_at: string }).captured_at,
+                    ).toLocaleString()
                   : "—"}
               </div>
             )}
             {ffData != null && (
-              <pre style={{
-                margin: 0,
-                padding: 6,
-                background: c.bgAlt,
-                borderRadius: 4,
-                fontSize: 10,
-                overflow: "auto",
-                maxHeight: 150,
-                whiteSpace: "pre-wrap",
-              }}>
-                {typeof ffData === "object" ? JSON.stringify(ffData, null, 2) : String(ffData)}
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 6,
+                  background: c.bgAlt,
+                  borderRadius: 4,
+                  fontSize: 10,
+                  overflow: "auto",
+                  maxHeight: 150,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {typeof ffData === "object"
+                  ? JSON.stringify(ffData, null, 2)
+                  : String(ffData)}
               </pre>
             )}
           </div>

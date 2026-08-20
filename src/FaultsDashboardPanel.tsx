@@ -18,8 +18,18 @@ import { createRoot } from "react-dom/client";
 
 import { MedkitApiClient } from "./medkit-api";
 import { type GatewayConnection } from "./shared-connection";
-import { useColorSchemeTheme, useGatewayConnectionSettings, useSharedConnection } from "./panel-hooks";
-import type { Fault, FaultSeverity, FaultResponse, Snapshot, SovdResourceEntityType } from "./types";
+import {
+  useColorSchemeTheme,
+  useGatewayConnectionSettings,
+  useSharedConnection,
+} from "./panel-hooks";
+import type {
+  Fault,
+  FaultSeverity,
+  FaultResponse,
+  Snapshot,
+  SovdResourceEntityType,
+} from "./types";
 import { isRosbagSnapshot } from "./types";
 import * as S from "./styles";
 import type { Theme } from "./styles";
@@ -63,7 +73,8 @@ function FaultsDashboardPanel({
   const [knobs, setKnobs] = useState<PanelKnobs>(() => {
     const init = (context.initialState ?? {}) as Partial<PanelKnobs>;
     return {
-      refreshIntervalSec: init.refreshIntervalSec ?? DEFAULT_PANEL_KNOBS.refreshIntervalSec,
+      refreshIntervalSec:
+        init.refreshIntervalSec ?? DEFAULT_PANEL_KNOBS.refreshIntervalSec,
       enableStream: init.enableStream ?? DEFAULT_PANEL_KNOBS.enableStream,
     };
   });
@@ -71,7 +82,10 @@ function FaultsDashboardPanel({
   // Memoized so the identity only changes when conn or knobs actually change.
   // `conn` is spread LAST so the shared connection always wins over any stale
   // gatewayUrl/basePath that an old layout may have persisted.
-  const state: PanelState = useMemo(() => ({ ...knobs, ...conn }), [conn, knobs]);
+  const state: PanelState = useMemo(
+    () => ({ ...knobs, ...conn }),
+    [conn, knobs],
+  );
 
   const [client, setClient] = useState<MedkitApiClient | null>(null);
   const [connected, setConnected] = useState(false);
@@ -116,25 +130,24 @@ function FaultsDashboardPanel({
       },
     },
     onExtraAction: (key, value) => {
-      if (key === "refreshInterval") setKnobs((p) => ({ ...p, refreshIntervalSec: Number(value) }));
-      else if (key === "enableStream") setKnobs((p) => ({ ...p, enableStream: value === "true" }));
+      if (key === "refreshInterval")
+        setKnobs((p) => ({ ...p, refreshIntervalSec: Number(value) }));
+      else if (key === "enableStream")
+        setKnobs((p) => ({ ...p, enableStream: value === "true" }));
     },
   });
 
   // ── Connection & data ───────────────────────────────────────────
 
-  const fetchFaults = useCallback(
-    async (c: MedkitApiClient) => {
-      try {
-        const res = await c.listAllFaults();
-        setFaults(res.items);
-        setError(undefined);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Fetch failed");
-      }
-    },
-    [],
-  );
+  const fetchFaults = useCallback(async (c: MedkitApiClient) => {
+    try {
+      const res = await c.listAllFaults();
+      setFaults(res.items);
+      setError(undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fetch failed");
+    }
+  }, []);
 
   // Connect + initial fetch + polling
   useEffect(() => {
@@ -156,9 +169,13 @@ function FaultsDashboardPanel({
         await fetchFaults(c);
         setLoading(false);
 
-        interval = setInterval(() => void fetchFaults(c), state.refreshIntervalSec * 1000);
+        interval = setInterval(
+          () => void fetchFaults(c),
+          state.refreshIntervalSec * 1000,
+        );
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Connection failed");
+        if (!cancelled)
+          setError(err instanceof Error ? err.message : "Connection failed");
       }
     })();
 
@@ -176,7 +193,9 @@ function FaultsDashboardPanel({
     streamCleanup.current = client.subscribeFaultStream(
       (fault) => {
         setFaults((prev) => {
-          const idx = prev.findIndex((f) => f.code === fault.code && f.entity_id === fault.entity_id);
+          const idx = prev.findIndex(
+            (f) => f.code === fault.code && f.entity_id === fault.entity_id,
+          );
           if (idx >= 0) {
             const copy = [...prev];
             copy[idx] = fault;
@@ -186,7 +205,11 @@ function FaultsDashboardPanel({
         });
       },
       (fault) => {
-        setFaults((prev) => prev.filter((f) => !(f.code === fault.code && f.entity_id === fault.entity_id)));
+        setFaults((prev) =>
+          prev.filter(
+            (f) => !(f.code === fault.code && f.entity_id === fault.entity_id),
+          ),
+        );
       },
     );
 
@@ -202,19 +225,29 @@ function FaultsDashboardPanel({
     if (!client || faults.length === 0) return;
     try {
       // Group faults by entity and clear per-entity (no global DELETE /faults endpoint)
-      const byEntity = new Map<string, { type: SovdResourceEntityType; id: string }>();
+      const byEntity = new Map<
+        string,
+        { type: SovdResourceEntityType; id: string }
+      >();
       for (const f of faults) {
         const key = `${f.entity_type}:${f.entity_id}`;
         if (!byEntity.has(key)) {
-          const eType = (f.entity_type === "component" ? "components"
-            : f.entity_type === "app" ? "apps"
-            : f.entity_type === "area" ? "areas"
-            : "apps") as SovdResourceEntityType;
+          const eType = (
+            f.entity_type === "component"
+              ? "components"
+              : f.entity_type === "app"
+                ? "apps"
+                : f.entity_type === "area"
+                  ? "areas"
+                  : "apps"
+          ) as SovdResourceEntityType;
           byEntity.set(key, { type: eType, id: f.entity_id });
         }
       }
       await Promise.all(
-        Array.from(byEntity.values()).map((e) => client.clearAllFaults(e.type, e.id).catch(() => {})),
+        Array.from(byEntity.values()).map((e) =>
+          client.clearAllFaults(e.type, e.id).catch(() => {}),
+        ),
       );
       setFaults([]);
     } catch {
@@ -225,7 +258,8 @@ function FaultsDashboardPanel({
   // ── Render ──────────────────────────────────────────────────────
 
   const c = S.colors(theme);
-  const visible = filter === "all" ? faults : faults.filter((f) => f.severity === filter);
+  const visible =
+    filter === "all" ? faults : faults.filter((f) => f.severity === filter);
 
   // Summary counts
   const counts = { critical: 0, error: 0, warning: 0, info: 0 };
@@ -244,18 +278,33 @@ function FaultsDashboardPanel({
 
   return (
     <div style={S.panelRoot(theme)}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
         <h3 style={{ ...S.heading(theme), margin: 0, flex: 1 }}>
           Faults Dashboard
           {state.enableStream && connected && (
-            <span style={{ ...S.badge("#fff", c.success), marginLeft: 8 }}>● LIVE</span>
+            <span style={{ ...S.badge("#fff", c.success), marginLeft: 8 }}>
+              ● LIVE
+            </span>
           )}
         </h3>
-        <button style={S.btn(theme, "ghost")} onClick={() => client && void fetchFaults(client)}>
+        <button
+          style={S.btn(theme, "ghost")}
+          onClick={() => client && void fetchFaults(client)}
+        >
           ↻ Refresh
         </button>
         {faults.length > 0 && (
-          <button style={S.btn(theme, "danger")} onClick={() => void handleClearAll()}>
+          <button
+            style={S.btn(theme, "danger")}
+            onClick={() => void handleClearAll()}
+          >
             Clear All
           </button>
         )}
@@ -278,10 +327,22 @@ function FaultsDashboardPanel({
             }}
             onClick={() => setFilter(filter === sev ? "all" : sev)}
           >
-            <div style={{ fontSize: 22, fontWeight: 700, color: S.severityColor(sev, theme) }}>
+            <div
+              style={{
+                fontSize: 22,
+                fontWeight: 700,
+                color: S.severityColor(sev, theme),
+              }}
+            >
               {counts[sev]}
             </div>
-            <div style={{ fontSize: 11, color: c.textMuted, textTransform: "capitalize" }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: c.textMuted,
+                textTransform: "capitalize",
+              }}
+            >
               {sev}
             </div>
           </div>
@@ -292,7 +353,10 @@ function FaultsDashboardPanel({
       {filter !== "all" && (
         <div style={{ fontSize: 11, color: c.textMuted, marginBottom: 6 }}>
           Showing {filter} only ·{" "}
-          <span style={{ cursor: "pointer", color: c.accent }} onClick={() => setFilter("all")}>
+          <span
+            style={{ cursor: "pointer", color: c.accent }}
+            onClick={() => setFilter("all")}
+          >
             show all
           </span>
         </div>
@@ -302,7 +366,9 @@ function FaultsDashboardPanel({
 
       {!loading && visible.length === 0 && (
         <div style={S.emptyState(theme)}>
-          {faults.length === 0 ? "✅ No active faults" : "No faults matching filter"}
+          {faults.length === 0
+            ? "✅ No active faults"
+            : "No faults matching filter"}
         </div>
       )}
 
@@ -317,7 +383,11 @@ function FaultsDashboardPanel({
           faultDetail={faultDetail}
           detailLoading={detailLoading}
           downloading={downloading}
-          onExpand={async (faultCode: string, entityId: string, entityType: string) => {
+          onExpand={async (
+            faultCode: string,
+            entityId: string,
+            entityType: string,
+          ) => {
             if (expandedFault === faultCode) {
               setExpandedFault(null);
               setFaultDetail(null);
@@ -328,8 +398,13 @@ function FaultsDashboardPanel({
             setDetailLoading(true);
             setFaultDetail(null);
             try {
-              const eType = (entityType + "s") as "apps" | "components" | "areas";
-              const detail = await client.getFaultWithEnvironmentData(eType, entityId, faultCode);
+              const eType = (entityType + "s") as
+                "apps" | "components" | "areas";
+              const detail = await client.getFaultWithEnvironmentData(
+                eType,
+                entityId,
+                faultCode,
+              );
               setFaultDetail(detail);
             } catch {
               setFaultDetail(null);
@@ -339,13 +414,18 @@ function FaultsDashboardPanel({
           }}
           onDownload={(uri: string) => {
             if (!client) return;
-            // Keyed by the URI, not the fault code: a fault can hold several
-            // recordings, and keying by code put every one of their buttons
-            // into the spinner on a single click.
-            setDownloading(uri);
             try {
               const url = client.getBulkDataDownloadUrl(uri);
+              // Keyed by the URI, not the fault code: a fault can hold several
+              // recordings, and keying by code put every one of their buttons
+              // into the spinner on a single click. URL first, so a throw never
+              // leaves `downloading` holding undefined.
+              setDownloading(uri);
               window.open(url, "_blank");
+            } catch (err) {
+              // On screen, not just the console: a silent no-op here is
+              // pixel-identical to a download that worked.
+              setError(err instanceof Error ? err.message : String(err));
             } finally {
               setTimeout(() => setDownloading(null), 1000);
             }
@@ -380,7 +460,7 @@ function formatDuration(seconds: number): string {
 // Fault Card with Snapshot Expand
 // ---------------------------------------------------------------------------
 
-function FaultCard({
+export function FaultCard({
   fault,
   theme,
   client,
@@ -406,7 +486,8 @@ function FaultCard({
   const c = S.colors(theme);
   const f = fault;
   const isExpanded = expandedFault === f.code;
-  const snapshots: Snapshot[] = isExpanded && faultDetail?.environment_data?.snapshots || [];
+  const snapshots: Snapshot[] =
+    (isExpanded && faultDetail?.environment_data?.snapshots) || [];
 
   return (
     <div
@@ -415,7 +496,14 @@ function FaultCard({
         borderLeft: `3px solid ${S.severityColor(f.severity, theme)}`,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 2,
+        }}
+      >
         <strong style={{ fontSize: 12 }}>{f.code}</strong>
         <span style={S.badge("#fff", S.severityColor(f.severity, theme))}>
           {f.severity}
@@ -429,9 +517,7 @@ function FaultCard({
         >
           {isExpanded ? "▾ Snapshots" : "▸ Snapshots"}
         </button>
-        <span style={{ fontSize: 10, color: c.textMuted }}>
-          {f.entity_id}
-        </span>
+        <span style={{ fontSize: 10, color: c.textMuted }}>{f.entity_id}</span>
       </div>
       <div style={{ fontSize: 12 }}>{f.message}</div>
       <div style={{ fontSize: 10, color: c.textMuted, marginTop: 2 }}>
@@ -442,13 +528,28 @@ function FaultCard({
 
       {/* Expanded snapshots */}
       {isExpanded && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${c.borderLight}` }}>
+        <div
+          style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: `1px solid ${c.borderLight}`,
+          }}
+        >
           {detailLoading && (
-            <div style={{ color: c.textMuted, fontSize: 12 }}>Loading snapshots…</div>
+            <div style={{ color: c.textMuted, fontSize: 12 }}>
+              Loading snapshots…
+            </div>
           )}
           {!detailLoading && snapshots.length > 0 && (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, marginBottom: 4 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: c.textMuted,
+                  marginBottom: 4,
+                }}
+              >
                 {snapshots.length} snapshot{snapshots.length !== 1 ? "s" : ""}
               </div>
               {snapshots.map((snap, idx) => {
@@ -464,17 +565,33 @@ function FaultCard({
                         borderLeft: `3px solid ${c.accent}`,
                       }}
                     >
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginBottom: 4,
+                        }}
+                      >
                         <span>📦</span>
                         <strong style={{ fontSize: 11 }}>Rosbag</strong>
-                        <span style={S.badge("#fff", c.accent)}>{snap.format}</span>
+                        <span style={S.badge("#fff", c.accent)}>
+                          {snap.format}
+                        </span>
                         <span style={{ fontSize: 11, color: c.textMuted }}>
-                          {formatBytes(snap.size_bytes)} · {formatDuration(snap.duration_sec)}
+                          {formatBytes(snap.size_bytes)} ·{" "}
+                          {formatDuration(snap.duration_sec)}
                         </span>
                         {/* The recording's own name. A fault that came back
                             several times renders one row per occurrence, and
                             without this they are identical on screen. */}
-                        <span style={{ fontSize: 10, color: c.textMuted, fontFamily: "monospace" }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: c.textMuted,
+                            fontFamily: "monospace",
+                          }}
+                        >
                           {snap.name}
                         </span>
                         <span style={{ flex: 1 }} />
@@ -484,7 +601,8 @@ function FaultCard({
                           disabled={downloading === snap.bulk_data_uri}
                           title={snap.name}
                         >
-                          {downloading === snap.bulk_data_uri ? "⏳" : "⬇"} Download
+                          {downloading === snap.bulk_data_uri ? "⏳" : "⬇"}{" "}
+                          Download
                         </button>
                       </div>
                     </div>
@@ -505,11 +623,20 @@ function FaultCard({
                       borderLeft: `3px solid ${c.success}`,
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 4,
+                      }}
+                    >
                       <span>📸</span>
                       <strong style={{ fontSize: 11 }}>Freeze Frame</strong>
                       {xm && "message_type" in xm && (
-                        <span style={S.badge(c.textMuted, c.bgCard)}>{(xm as { message_type: string }).message_type}</span>
+                        <span style={S.badge(c.textMuted, c.bgCard)}>
+                          {(xm as { message_type: string }).message_type}
+                        </span>
                       )}
                       {xm && "topic" in xm && (
                         <span style={{ fontSize: 10, color: c.textMuted }}>
@@ -518,17 +645,21 @@ function FaultCard({
                       )}
                     </div>
                     {ffData != null && (
-                      <pre style={{
-                        margin: 0,
-                        padding: 6,
-                        background: c.bgCard,
-                        borderRadius: 4,
-                        fontSize: 10,
-                        overflow: "auto",
-                        maxHeight: 120,
-                        whiteSpace: "pre-wrap",
-                      }}>
-                        {typeof ffData === "object" ? JSON.stringify(ffData, null, 2) : String(ffData)}
+                      <pre
+                        style={{
+                          margin: 0,
+                          padding: 6,
+                          background: c.bgCard,
+                          borderRadius: 4,
+                          fontSize: 10,
+                          overflow: "auto",
+                          maxHeight: 120,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {typeof ffData === "object"
+                          ? JSON.stringify(ffData, null, 2)
+                          : String(ffData)}
                       </pre>
                     )}
                   </div>
@@ -537,10 +668,14 @@ function FaultCard({
             </div>
           )}
           {!detailLoading && snapshots.length === 0 && !faultDetail && (
-            <div style={{ color: c.textMuted, fontSize: 12 }}>No environment data available</div>
+            <div style={{ color: c.textMuted, fontSize: 12 }}>
+              No environment data available
+            </div>
           )}
           {!detailLoading && faultDetail && snapshots.length === 0 && (
-            <div style={{ color: c.textMuted, fontSize: 12 }}>No snapshots captured for this fault</div>
+            <div style={{ color: c.textMuted, fontSize: 12 }}>
+              No snapshots captured for this fault
+            </div>
           )}
         </div>
       )}
